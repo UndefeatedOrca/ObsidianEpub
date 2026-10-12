@@ -1,0 +1,11 @@
+node_modules/
+main.js
+dist/
+coverage/
+.DS_Store
+*.log
+tests/browser/.build.js
+tests/browser/.plugin.js
+test-results/
+playwright-report/
+.conversion-results/

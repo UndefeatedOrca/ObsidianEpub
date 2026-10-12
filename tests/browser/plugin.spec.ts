@@ -1,0 +1,48 @@
+import { test, expect } from '@playwright/test';
+test('plugin UI: annotate, comment, restore, export, embed, rename and undo', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/plugin');
+  await expect(page.locator('body')).toHaveAttribute('data-ready', 'true');
+  const frame = page.frameLocator('iframe').first();
+  await expect(frame.locator('h1')).toHaveText('A place to begin');
+  await frame.locator('#lead').evaluate(el => {
+    const r = el.ownerDocument.createRange(); r.setStart(el.firstChild!, 0); r.setEnd(el.firstChild!, el.textContent!.length);
+    const selection = el.ownerDocument.defaultView!.getSelection()!; selection.removeAllRanges(); selection.addRange(r);
+    el.ownerDocument.dispatchEvent(new Event('selectionchange'));
+  });
+  await expect(page.locator('.ebook-selection > span')).toContainText('Every idea begins');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Passage comment' }).fill('Connect this to my research.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'Annotations', exact: true }).click();
+  await expect(page.locator('.ebook-card')).toHaveCount(1);
+  await expect(page.locator('.ebook-card')).toContainText('Connect this to my research.');
+  await expect(page.locator('svg .ebook-highlight')).toHaveCount(1);
+  await page.evaluate(() => (window as any).pluginTest.reopen());
+  await page.getByRole('button', { name: 'Annotations', exact: true }).click();
+  await expect(page.locator('.ebook-card')).toHaveCount(1);
+  await expect(page.locator('svg .ebook-highlight')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Bookmark', exact: true }).click();
+  await expect(page.locator('.ebook-card')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(1);
+  const note = await page.evaluate(() => (window as any).pluginTest.notes[0]);
+  expect(note.body).toContain('Connect this to my research.');
+  expect(note.body).toContain('obsidian://ebook-plus?');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(2);
+  expect(await page.evaluate(() => (window as any).pluginTest.notes[1].path)).not.toBe(note.path);
+  await page.evaluate(() => {
+    const t = (window as any).pluginTest; const b = t.view.record;
+    t.embed(JSON.stringify({ book: b.id, annotation: b.annotations[0].id }));
+    t.file.path = 'Moved/Garden.epub'; t.events.rename(t.file, 'Books/Garden.epub');
+  });
+  await expect(page.locator('#embed')).toContainText('Every idea begins');
+  expect(await page.evaluate(() => (window as any).pluginTest.view.record.path)).toBe('Moved/Garden.epub');
+  await page.getByRole('button', { name: 'Delete', exact: true }).first().click();
+  await expect(page.locator('.ebook-card')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('.ebook-card')).toHaveCount(2);
+  await page.screenshot({ path: 'test-results/plugin.png' });
+  expect(errors).toEqual([]);
+});

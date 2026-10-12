@@ -1,0 +1,14 @@
+import JSZip from 'jszip';
+import { mkdir, writeFile } from 'node:fs/promises';
+const zip = new JSZip();
+zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+zip.file('META-INF/container.xml', `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+zip.file('EPUB/package.opf', `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">ebook-plus-test</dc:identifier><dc:title>The Garden of Ideas</dc:title><dc:language>en</dc:language><dc:creator>Ebook Plus</dc:creator><meta property="dcterms:modified">2026-10-12T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="css" href="style.css" media-type="text/css"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`);
+zip.file('EPUB/nav.xhtml', `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="one.xhtml">1. A place to begin</a></li><li><a href="two.xhtml">2. Following a thought</a></li></ol></nav></body></html>`);
+zip.file('EPUB/style.css', 'body { font-family: Georgia, serif; } h1 { font-size: 2em; font-weight: normal; } p { margin: 1em 0; }');
+for (const [file, heading, lead] of [['one', 'A place to begin', 'Every idea begins with a small act of attention.'], ['two', 'Following a thought', 'Connections turn a collection of notes into a living conversation.']]) {
+  zip.file(`EPUB/${file}.xhtml`, `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${heading}</title><link rel="stylesheet" href="style.css"/></head><body><h1>${heading}</h1><p id="lead">${lead}</p>${Array.from({ length: 12 }, (_, i) => `<p>Paragraph ${i + 1}. A reader leaves a trail through a book: a question in the margin, a passage remembered, an idea carried into another day. A useful library keeps those connections close. The garden grows through patient attention and thoughtful exploration.</p>`).join('')}<script>window.parent.BOOK_SCRIPT_RAN = true;</script><p><a href="https://example.invalid/blocked">External link</a></p><img src="https://example.invalid/tracker.png" alt="Blocked remote image"/></body></html>`);
+}
+await mkdir('tests/fixtures', { recursive: true });
+await writeFile('tests/fixtures/garden.epub', await zip.generateAsync({ type: 'nodebuffer' }));
+console.log('Created original two-chapter test EPUB.');

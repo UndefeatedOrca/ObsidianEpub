@@ -1,0 +1,26 @@
+{
+  "name": "obsidian-ebook-plus",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "test": "vitest run tests/model.test.ts",
+    "test:browser": "node scripts/fixture.mjs && playwright test",
+    "test:conversion": "node scripts/fixture.mjs && node scripts/test-conversion.mjs",
+    "package": "npm run build && node scripts/notices.mjs && node scripts/package.mjs"
+  },
+  "overrides": { "@xmldom/xmldom": "0.9.12" },
+  "dependencies": {
+    "epubjs": "0.3.93"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "jszip": "^3.10.1",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.8.0",
+    "vitest": "^5.0.4",
+    "@playwright/test": "^1.58.0"
+  }
+}
