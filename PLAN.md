@@ -22,3 +22,9 @@ All five implementation steps are complete for the 0.1.0 development release. Se
 - https://ryotaushio.github.io/obsidian-pdf-plus/annotating-pdfs.html
 - https://github.com/futurepress/epub.js
 - https://docs.obsidian.md/Plugins/User+interface/Views
+- https://ryotaushio.github.io/obsidian-pdf-plus/link-copy-formats.html
+- https://ryotaushio.github.io/obsidian-pdf-plus/templating.html
+
+## 0.2.0 upgrade
+
+Added page/scroll modes, asynchronous native passage navigation, saved-highlight copy behavior and color-preserving EPUB callouts with configurable templates. PDF++'s documentation informed the distinction between display text and copy format; no PDF++ source code was copied. EPUB CFIs and annotation IDs replace PDF page/selection coordinates.

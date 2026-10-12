@@ -1,12 +1,12 @@
-# Verification for 0.1.0
+# Verification for 0.2.0
 
 Verified on Windows on October 12, 2026.
 
 | Check | Result |
 | --- | --- |
 | TypeScript strict typecheck and bundled plugin build | Passed |
-| Model tests | 14 passed |
-| Browser tests in headless Microsoft Edge | 3 passed |
+| Model tests | 17 passed |
+| Browser tests in headless Microsoft Edge | 6 passed |
 | Calibre 6.1 MOBI → EPUB round trip | Passed |
 | Calibre 6.1 AZW3 → EPUB round trip | Passed |
 | Unsupported conversion format rejection | Passed |
@@ -17,6 +17,8 @@ Verified on Windows on October 12, 2026.
 Browser tests render a real, locally generated, two-chapter EPUB. They cover CSS loading, text selection and exact CFI round trips, highlight drawing/removal/restoration, chapter search, theme changes, blocked script execution and remote images, and malformed archive errors. A public-API Obsidian adapter also exercises the actual plugin UI: comment creation, persistence/reopening, bookmarks, export without overwrite, text embeds, rename handling, and deletion undo.
 
 Conversion tests invoke the actual installed Calibre executable with paths containing spaces and `&`, then inspect the produced EPUB archives. They generate their own MOBI/AZW3 inputs from the original test EPUB.
+
+The 0.2.0 additions verify page buttons, actual wheel scrolling, mode persistence, native colored callout links, legacy protocol clicks, highlight creation/deduplication on copy, saved color preservation, opening during file load, and deferred-reader protocol navigation. Calibre conversion was verified in 0.1.0; the conversion implementation is unchanged. The template/data tests verify migration defaults and exact annotation preservation from 0.1.0 data.
 
 ## Host validation still needed
 

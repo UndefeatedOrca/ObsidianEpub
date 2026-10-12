@@ -2,12 +2,13 @@ export const COLORS = { yellow: '#f6d365', green: '#86d9a0', blue: '#85bdf5', pi
 export type Color = keyof typeof COLORS;
 export interface Annotation {
   id: string; cfi: string; text: string; comment: string; color: Color;
-  kind: 'highlight' | 'bookmark'; created: string;
+  kind: 'highlight' | 'bookmark'; created: string; location?: string;
 }
 export interface BookRecord { id: string; path: string; position?: string; annotations: Annotation[] }
-export interface Settings { fontSize: number; theme: 'light' | 'dark' | 'sepia'; vim: boolean; calibre: string; notesFolder: string; callouts: boolean }
+export type ReadingMode = 'paginated' | 'scrolled';
+export interface Settings { fontSize: number; theme: 'light' | 'dark' | 'sepia'; vim: boolean; calibre: string; notesFolder: string; callouts: boolean; readingMode: ReadingMode; quoteTemplate: string; displayTemplate: string }
 export interface Data { version: 1; settings: Settings; books: Record<string, BookRecord> }
-export const DEFAULTS: Settings = { fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true };
+export const DEFAULTS: Settings = { fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true, readingMode: 'paginated', quoteTemplate: '> [!EPUB|{{color}}] {{linkWithDisplay}}\n> {{text}}\n{{commentBlock}}', displayTemplate: '{{file.basename}}, {{location}}' };
 export function emptyData(): Data { return { version: 1, settings: { ...DEFAULTS }, books: {} }; }
 export function isCfi(value: unknown): value is string { return typeof value === 'string' && /^epubcfi\(.+\)$/.test(value) && value.length < 8192; }
 export function hydrate(raw: unknown): Data {
@@ -23,6 +24,9 @@ export function hydrate(raw: unknown): Data {
     if (typeof s.callouts === 'boolean') result.settings.callouts = s.callouts;
     if (typeof s.calibre === 'string') result.settings.calibre = s.calibre;
     if (typeof s.notesFolder === 'string') result.settings.notesFolder = s.notesFolder;
+    if (s.readingMode === 'paginated' || s.readingMode === 'scrolled') result.settings.readingMode = s.readingMode;
+    if (typeof s.quoteTemplate === 'string' && s.quoteTemplate.trim()) result.settings.quoteTemplate = s.quoteTemplate;
+    if (typeof s.displayTemplate === 'string' && s.displayTemplate.trim()) result.settings.displayTemplate = s.displayTemplate;
   }
   for (const [id, b] of Object.entries(data.books ?? {})) {
     if (!b || b.id !== id || typeof b.path !== 'string' || !Array.isArray(b.annotations)) throw new Error('Invalid Ebook Plus annotation data; restore data.json from backup.');
@@ -31,15 +35,35 @@ export function hydrate(raw: unknown): Data {
   return result;
 }
 export function passageUrl(vault: string, book: BookRecord, cfi: string): string {
-  return `obsidian://ebook-plus?${new URLSearchParams({ vault, book: book.id, file: book.path, cfi })}`;
+  return `obsidian://ebook-plus?${new URLSearchParams({ vault, book: book.id, file: book.path, cfi })}`.replace(/\+/g, '%20');
+}
+export interface PassageTarget { book?: string; annotation?: string; cfi?: string; color?: Color; file?: string }
+export function parsePassage(subpath: string): PassageTarget | undefined {
+  const query = subpath.replace(/^#/, '');
+  const params = new URLSearchParams(query);
+  if (!params.has('ebook') && !params.has('cfi') && !params.has('annotation')) return;
+  const cfi = params.get('cfi') ?? undefined;
+  if (cfi && !isCfi(cfi)) throw new Error('Invalid EPUB passage link.');
+  const color = params.get('color');
+  return { book: params.get('ebook') ?? params.get('book') ?? undefined, annotation: params.get('annotation') ?? undefined, cfi, color: color && Object.prototype.hasOwnProperty.call(COLORS, color) ? color as Color : undefined };
+}
+function renderTemplate(template: string, values: Record<string, string>): string {
+  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (whole, key) => values[key] ?? whole);
+}
+export function passageLink(book: BookRecord, a: Annotation, display?: string): string {
+  const fragment = new URLSearchParams({ ebook: book.id, annotation: a.id, cfi: a.cfi, color: a.color }).toString().replace(/\+/g, '%20');
+  const label = (display ?? `${book.path.split('/').pop()!.replace(/\.epub$/i, '')}, ${a.location || 'passage'}`).replace(/[\r\n|\[\]]/g, ' ');
+  if (/[#|\[\]]/.test(book.path)) return `[${escapeMarkdown(label)}](<${encodeURI(book.path).replace(/#/g, '%23').replace(/\?/g, '%3F')}#${fragment}>)`;
+  return `[[${book.path}#${fragment}|${label}]]`;
 }
 export function escapeMarkdown(s: string): string { return s.replace(/[\\`*_[\]<>#|!]/g, '\\$&'); }
-export function quoteMarkdown(vault: string, book: BookRecord, a: Annotation, callout: boolean): string {
-  const title = escapeMarkdown(book.path.split('/').pop()!.replace(/\.epub$/i, ''));
-  const body = escapeMarkdown(a.text || 'Bookmark').split(/\r?\n/).map(l => `> ${l}`).join('\n');
-  const comment = a.comment ? `\n>\n${escapeMarkdown(a.comment).split(/\r?\n/).map(l => `> ${l}`).join('\n')}` : '';
-  const fileLink = `[${title}](<${encodeURI(book.path).replace(/#/g, '%23').replace(/\?/g, '%3F')}>)`;
-  return `${callout ? `> [!quote] ${title}\n` : ''}${body}${comment}\n>\n> [Open passage](${passageUrl(vault, book, a.cfi)}) · ${fileLink}\n`;
+export function quoteMarkdown(_vault: string, book: BookRecord, a: Annotation, callout: boolean, settings: Pick<Settings, 'quoteTemplate' | 'displayTemplate'> = DEFAULTS): string {
+  const values: Record<string, string> = { 'file.basename': book.path.split('/').pop()!.replace(/\.epub$/i, ''), 'file.path': book.path, location: a.location || 'passage', color: a.color, colorName: a.color, calloutType: 'EPUB' };
+  const display = renderTemplate(settings.displayTemplate, values);
+  const link = passageLink(book, a, display);
+  const text = escapeMarkdown(a.text || 'Bookmark').replace(/\r?\n/g, '\n> ');
+  const comment = escapeMarkdown(a.comment).replace(/\r?\n/g, '\n> ');
+  return renderTemplate(callout ? settings.quoteTemplate : '> {{text}}\n>\n> {{linkWithDisplay}}\n{{commentBlock}}', { ...values, display, linkWithDisplay: link, link, text, comment, commentBlock: a.comment ? `>\n> ${comment}\n` : '' }).trimEnd() + '\n';
 }
 export function embedSource(book: BookRecord, a: Annotation): string {
   return '```ebook\n' + JSON.stringify({ book: book.id, annotation: a.id }, null, 2) + '\n```';

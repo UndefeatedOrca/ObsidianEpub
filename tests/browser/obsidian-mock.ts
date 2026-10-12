@@ -36,12 +36,15 @@ export class Plugin {
   addSettingTab() {}
   registerObsidianProtocolHandler(name: string, handler: Function) { this.handlers[name] = handler; }
   registerEvent() {}
+  registerDomEvent(el: EventTarget, type: string, fn: EventListener, options?: boolean) { el.addEventListener(type, fn, options); }
   addCommand(command: any) { this.commands.push(command); }
   registerMarkdownCodeBlockProcessor(name: string, handler: Function) { this.handlers[name] = handler; }
 }
 export class FileView {
   app: any; contentEl: HTMLElement; file?: TFile;
   constructor(public leaf: any) { this.app = leaf.app; this.contentEl = document.querySelector('#plugin')!; }
+  registerDomEvent(el: EventTarget, type: string, fn: EventListener, options?: boolean) { el.addEventListener(type, fn, options); }
+  setEphemeralState() {}
 }
 export class MarkdownView {}
 export class WorkspaceLeaf {}

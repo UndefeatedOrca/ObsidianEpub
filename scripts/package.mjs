@@ -7,5 +7,6 @@ for (const file of ['main.js', 'manifest.json', 'styles.css', 'LICENSE', 'THIRD_
   zip.file(`ebook-plus/${file}`, await readFile(file));
 }
 const { writeFile } = await import('node:fs/promises');
-await writeFile('dist/ebook-plus-0.1.0.zip', await zip.generateAsync({ type: 'nodebuffer' }));
-console.log('Packaged dist/ebook-plus and dist/ebook-plus-0.1.0.zip');
+const { version } = JSON.parse(await readFile('manifest.json', 'utf8'));
+await writeFile(`dist/ebook-plus-${version}.zip`, await zip.generateAsync({ type: 'nodebuffer' }));
+console.log(`Packaged dist/ebook-plus and dist/ebook-plus-${version}.zip`);

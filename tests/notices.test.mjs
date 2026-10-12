@@ -36,7 +36,7 @@ test('refuses packages without license text and upgrades needing review', async 
 test('release ZIP includes the current license, author and complete notices', async () => {
   const manifest = JSON.parse(await readFile('manifest.json', 'utf8'));
   const zip = await JSZip.loadAsync(await readFile(`dist/ebook-plus-${manifest.version}.zip`));
-  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'manifest.json']) {
+  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'manifest.json', 'main.js', 'styles.css']) {
     assert.equal(await zip.file(`ebook-plus/${file}`).async('string'), await readFile(file, 'utf8'));
   }
   const notices = await zip.file('ebook-plus/THIRD_PARTY_NOTICES.md').async('string');

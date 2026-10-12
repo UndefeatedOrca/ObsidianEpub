@@ -4,24 +4,41 @@ An EPUB reader that connects book passages to your Markdown notes, inspired by P
 
 ## Install
 
-1. Download or build `dist/ebook-plus-0.1.0.zip`.
+1. Download or build `dist/ebook-plus-0.2.0.zip`.
 2. Extract its `ebook-plus` folder into `<vault>/.obsidian/plugins/`.
 3. Reload Obsidian and enable **Ebook Plus** under Community plugins.
 4. Add an EPUB to the vault and click it. If another plugin handles EPUBs, disable that handler first.
 
 This is an initial development release, not yet published in the community plugin directory.
 
+For BRAT, create a `0.2.0` GitHub prerelease and attach `main.js`, `manifest.json`, and `styles.css` individually from `dist/ebook-plus/`, alongside `LICENSE` and `THIRD_PARTY_NOTICES.md`. The ZIP is optional for manual installation. BRAT does not install from the ZIP. To upgrade manually, replace those three plugin files and retain `data.json`; existing highlights and positions are preserved.
+
 ## Reading and annotation
 
-- Navigate with Chapters, arrow buttons or arrow keys inside the book. Search finds up to 200 passages throughout the book.
+- Choose **Pages** or **Scroll** in the top-left dropdown. Pages has labeled Previous page / Next page buttons; arrow keys and Page Up / Page Down work in the book and when the reading area is focused. Scroll mode supports wheel, trackpad, touch and a scrollbar, loading adjacent chapters as you read. Switching modes keeps your location. Search finds up to 200 passages throughout the book.
 - Choose light, sepia or dark and use A− / A+ to change type size. The last reading location is saved.
 - Select text, choose a color, then Highlight or Comment. Click Annotations to jump to, edit, copy or delete an annotation. Deletion offers Undo for ten seconds.
 - Bookmark saves the current visible location. Selection and current location are distinct: Copy link uses the selected passage when one is selected.
-- Copy quote produces a Markdown quote or callout with a passage link and a regular vault file link for backlinks. Insert in note lets you select an already-open Markdown note.
+- Copy quote saves the selection as a persistent highlight, then produces a colored EPUB callout containing an ordinary vault link to that exact annotation. Copying an existing highlight preserves its ID, color and comment. Copy link also saves selected text; with no selection it copies the current reading location. Insert in note lets you select an already-open Markdown note.
 - Export creates a new note containing all annotations; it never overwrites an existing note.
-- Embed copies an `ebook` code block that displays a saved quotation/comment and a passage link in reading mode or Live Preview. This is a text excerpt embed, not a live book viewport.
+- The annotation panel's **Copy callout** produces ordinary editable Markdown with the annotation color. Existing `ebook` code-block embeds from 0.1.0 still render, but are no longer the primary copy workflow.
 - Enable optional Vim navigation in settings: h/k previous, j/l next, y copy quote.
 - Commands are available from Obsidian's command palette while an ebook pane is active.
+
+### Colored callouts and templates
+
+The default copy format resembles PDF++'s colored callouts:
+
+```markdown
+> [!EPUB|yellow] [[Books/My book.epub#ebook=BOOK_ID&annotation=HIGHLIGHT_ID&cfi=ENCODED_CFI&color=yellow|My book, Chapter 3]]
+> The selected passage.
+```
+
+This example uses placeholders; Copy quote generates the actual IDs and encoded CFI. The file link gives Obsidian a backlink and opens the matching saved highlight. The CFI is a fallback when annotation data is unavailable. Links also resolve through the persistent book ID after a rename while the plugin is enabled. Yellow, green, blue, pink and purple callouts are styled by the plugin in reading mode and Live Preview. Their Markdown text and color are snapshots: editing a saved highlight later does not rewrite pasted notes.
+
+In settings, **Link display template** controls the title, and **Quote template** controls the copied Markdown. Supported placeholders: `{{file.basename}}`, `{{file.path}}`, `{{location}}`, `{{color}}` / `{{colorName}}`, `{{calloutType}}`, `{{linkWithDisplay}}` / `{{link}}`, `{{display}}`, `{{text}}`, `{{comment}}`, and `{{commentBlock}}` (a complete quoted comment). Display templates support the file/location/color variables. Templates substitute these values; they do not evaluate JavaScript expressions. Use `EPUB` as the callout type for the included color styling. Reset copy templates restores defaults.
+
+Locations describe the current chapter and, in Pages mode, its current layout page. These labels are informational: the link anchors to text, so changing font size or reading mode does not rely on the page label remaining the same.
 
 ## MOBI, AZW/AZW3 and other formats
 
@@ -35,7 +52,9 @@ Native EPUB reading is designed for desktop and mobile. Conversion requires desk
 
 Annotations, comments, book IDs, reading positions and preferences are stored in `.obsidian/plugins/ebook-plus/data.json`. Back up/sync this file alongside your books. Changes in multiple open panes are shared; simultaneous edits on different devices require your sync tool's conflict resolution.
 
-Links use `obsidian://ebook-plus?vault=…&book=…&file=…&cfi=…`. The persistent book ID survives file and folder renames while the plugin is enabled. The file path is a fallback when opening a link without its original plugin data. Exported normal vault links follow Obsidian's own link-update settings. Moving books while the plugin is disabled, replacing an EPUB with a different edition, or deleting plugin data can invalidate anchors. EPUB CFIs identify text locations, not stable printed page numbers.
+New quote links use `[[file.epub#ebook=…&annotation=…&cfi=…&color=…|label]]`. Filenames containing characters reserved by wikilinks use a Markdown link instead. Legacy `obsidian://ebook-plus?vault=…&book=…&file=…&cfi=…` links remain supported, including local clicks on old “Open passage” links. Passage navigation waits for the reader to finish loading. The persistent book ID survives file and folder renames while the plugin is enabled. The file path is a fallback when opening a link without its original plugin data. Exported vault links follow Obsidian's own link-update settings. Moving books while the plugin is disabled, replacing an EPUB with a different edition, or deleting plugin data can invalidate anchors. EPUB CFIs identify text locations, not stable printed page numbers.
+
+You do not need to paste into a note to keep a highlight. Highlight, Comment and Copy quote save it in plugin data immediately. Deleting a pasted quote does not delete its highlight, and deleting a highlight does not delete the pasted Markdown. Back up `data.json`; annotations are not written inside the EPUB archive.
 
 Book scripts, forms, frames and remote resources are blocked. External links inside the ebook are disabled in this first version. The EPUB archive is never changed. Large or malformed books may not render; search currently retains loaded chapters in memory. EPUB 2/3 reflowable books are the primary target; complex fixed-layout, RTL and multimedia books need broader compatibility testing.
 

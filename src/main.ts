@@ -1,6 +1,6 @@
 import { FileView, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, normalizePath } from 'obsidian';
 import type { App } from 'obsidian';
-import { Annotation, BookRecord, COLORS, Color, CONVERTIBLE, Data, embedSource, hydrate, isCfi, passageUrl, quoteMarkdown, safeFolder } from './model';
+import { Annotation, BookRecord, COLORS, Color, CONVERTIBLE, Data, DEFAULTS, hydrate, isCfi, passageUrl, passageLink, parsePassage, PassageTarget, ReadingMode, quoteMarkdown, safeFolder } from './model';
 import { Reader } from './reader';
 
 const VIEW = 'ebook-plus-reader';
@@ -31,17 +31,34 @@ export default class EbookPlus extends Plugin {
     this.registerExtensions(['epub'], VIEW);
     this.addSettingTab(new EbookSettings(this.app, this));
     this.registerObsidianProtocolHandler('ebook-plus', params => {
-      void (async () => {
-        if (params.vault && params.vault !== this.app.vault.getName()) return;
-        if (params.cfi && !isCfi(params.cfi)) throw new Error('Invalid EPUB passage link.');
-        const record = this.data.books[params.book];
-        const file = this.app.vault.getAbstractFileByPath(record?.path ?? params.file ?? '');
-        if (!(file instanceof TFile) || file.extension.toLowerCase() !== 'epub') throw new Error('Linked EPUB not found in this vault.');
-        const leaf = this.app.workspace.getLeaf('tab');
-        await leaf.openFile(file);
-        if (leaf.view instanceof EbookView && params.cfi) await leaf.view.go(params.cfi);
-      })().catch(fail);
+      if (params.vault && params.vault !== this.app.vault.getName()) return;
+      void this.openPassage({ book: params.book, file: params.file, cfi: params.cfi, annotation: params.annotation }).catch(fail);
     });
+    // Handle note clicks locally, including legacy protocol links, without an
+    // operating-system protocol round trip. Native link opening is also handled
+    // by FileView.setEphemeralState (keyboard navigation and other plugins).
+    this.registerDomEvent(document, 'click', event => {
+      const el = event.target as Element;
+      const anchor = el.closest?.('a[data-href], a[href]');
+      const href = anchor?.getAttribute('data-href') ?? anchor?.getAttribute('href');
+      if (!href) return;
+      try {
+        let target: PassageTarget | undefined;
+        if (href.startsWith('obsidian://ebook-plus?')) {
+          const params = new URL(href).searchParams;
+          if (params.get('vault') && params.get('vault') !== this.app.vault.getName()) return;
+          target = { book: params.get('book') ?? undefined, file: params.get('file') ?? undefined, cfi: params.get('cfi') ?? undefined };
+        } else {
+          const hash = href.indexOf('#');
+          if (hash < 0 || !href.slice(hash).startsWith('#ebook=')) return;
+          target = parsePassage(href.slice(hash));
+          if (target) target.file = decodeURIComponent(href.slice(0, hash));
+        }
+        if (!target) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        void this.openPassage(target, event.ctrlKey || event.metaKey).catch(fail);
+      } catch (error) { event.preventDefault(); fail(error); }
+    }, true);
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
       let changed = false;
       for (const book of Object.values(this.data.books)) {
@@ -80,9 +97,27 @@ export default class EbookPlus extends Plugin {
         const quote = el.createEl('blockquote', { cls: 'ebook-embed' });
         quote.createEl('p', { text: a.text || 'Bookmark' });
         if (a.comment) quote.createEl('p', { text: a.comment, cls: 'ebook-muted' });
-        quote.createEl('a', { text: `Open passage · ${book.path}`, href: passageUrl(this.app.vault.getName(), book, a.cfi) });
+        const link = quote.createEl('a', { text: `Open passage · ${book.path}`, href: passageUrl(this.app.vault.getName(), book, a.cfi) });
+        link.onclick = event => { event.preventDefault(); void this.openPassage({ book: book.id, annotation: a.id, cfi: a.cfi }).catch(fail); };
       } catch (e) { el.createEl('p', { text: `Ebook Plus: ${e instanceof Error ? e.message : e}` }); }
     });
+  }
+  async openPassage(target: PassageTarget, newTab = false): Promise<void> {
+    if (target.cfi && !isCfi(target.cfi)) throw new Error('Invalid EPUB passage link.');
+    const record = target.book ? this.data.books[target.book] : undefined;
+    const path = record?.path ?? target.file ?? '';
+    const file = this.app.vault.getAbstractFileByPath(path) ?? this.app.metadataCache.getFirstLinkpathDest(path, '');
+    if (!(file instanceof TFile) || file.extension.toLowerCase() !== 'epub') throw new Error('Linked EPUB not found in this vault.');
+    const existing = !newTab && this.app.workspace.getLeavesOfType(VIEW).find(leaf => leaf.view instanceof EbookView && leaf.view.file?.path === file.path);
+    const leaf = existing || this.app.workspace.getLeaf('tab');
+    if (!existing) {
+      await leaf.openFile(file);
+      await leaf.loadIfDeferred?.();
+      if (!(leaf.view instanceof EbookView)) await leaf.setViewState({ type: VIEW, state: { file: file.path }, active: true });
+    }
+    if (!(leaf.view instanceof EbookView)) throw new Error('Could not open the Ebook Plus reader.');
+    await this.app.workspace.revealLeaf(leaf);
+    await leaf.view.openTarget(target);
   }
   persist(): Promise<void> {
     const snapshot = JSON.parse(JSON.stringify(this.data));
@@ -144,11 +179,33 @@ export class EbookView extends FileView {
   private resize?: ResizeObserver;
   private saveTimer?: number;
   private panelMode: 'chapters' | 'annotations' | 'search' = 'chapters';
-  constructor(leaf: WorkspaceLeaf, readonly plugin: EbookPlus) { super(leaf); }
+  private loading: Promise<void> = Promise.resolve();
+  private ready = false;
+  private pendingTarget?: PassageTarget;
+  constructor(leaf: WorkspaceLeaf, readonly plugin: EbookPlus) {
+    super(leaf);
+    this.registerDomEvent(this.contentEl, 'keydown', event => this.keydown(event));
+  }
   getViewType(): string { return VIEW; }
   getDisplayText(): string { return this.file?.basename ?? 'Ebook Plus'; }
   getIcon(): string { return 'book-open'; }
   async onLoadFile(file: TFile): Promise<void> {
+    this.loading = this.loadBook(file);
+    await this.loading;
+  }
+  setEphemeralState(state: unknown): void {
+    super.setEphemeralState(state);
+    const subpath = (state as { subpath?: string } | undefined)?.subpath;
+    if (!subpath) return;
+    try {
+      const target = parsePassage(subpath);
+      if (target) {
+        if (this.ready) void this.openTarget(target).catch(fail);
+        else this.pendingTarget = target;
+      }
+    } catch (error) { fail(error); }
+  }
+  private async loadBook(file: TFile): Promise<void> {
     await this.release();
     const generation = ++this.generation;
     this.record = this.plugin.record(file);
@@ -156,8 +213,14 @@ export class EbookView extends FileView {
     this.panelMode = 'chapters';
     this.contentEl.empty(); this.contentEl.addClass('ebook-plus');
     const bar = this.contentEl.createDiv('ebook-toolbar');
-    action(bar, '←', () => this.reader?.rendition?.prev()).setAttribute('aria-label', 'Previous page');
-    action(bar, '→', () => this.reader?.rendition?.next()).setAttribute('aria-label', 'Next page');
+    const mode = this.plugin.data.settings.readingMode;
+    const modeSelect = bar.createEl('select', { attr: { 'aria-label': 'Reading mode' } });
+    modeSelect.createEl('option', { value: 'paginated', text: 'Pages' });
+    modeSelect.createEl('option', { value: 'scrolled', text: 'Scroll' });
+    modeSelect.value = mode;
+    modeSelect.onchange = () => { modeSelect.disabled = true; void this.changeMode(modeSelect.value as ReadingMode).catch(fail); };
+    action(bar, mode === 'paginated' ? '← Previous page' : '↑ Back', () => this.reader?.rendition?.prev());
+    action(bar, mode === 'paginated' ? 'Next page →' : 'Forward ↓', () => this.reader?.rendition?.next());
     action(bar, 'Chapters', () => { this.panelMode = 'chapters'; this.chapters(); });
     action(bar, 'Annotations', () => { this.panelMode = 'annotations'; this.annotations(); });
     action(bar, 'Search', () => this.searchPanel());
@@ -172,6 +235,7 @@ export class EbookView extends FileView {
     this.selectionLabel = selection.createSpan({ text: 'Select text in the book to highlight or quote it.' });
     const colors = selection.createEl('select', { attr: { 'aria-label': 'Highlight color' } });
     for (const key of Object.keys(COLORS)) colors.createEl('option', { text: key, value: key });
+    colors.value = this.color;
     colors.onchange = () => { this.color = colors.value as Color; };
     action(selection, 'Highlight', () => this.annotate());
     action(selection, 'Comment', () => this.annotate(true));
@@ -182,6 +246,9 @@ export class EbookView extends FileView {
     this.panel = body.createDiv('ebook-panel');
     this.panel.setAttribute('aria-label', 'Book navigation');
     const host = body.createDiv('ebook-pages');
+    host.setAttribute('tabindex', '0');
+    host.setAttribute('aria-label', mode === 'scrolled' ? 'Book text. Scroll to read.' : 'Book text. Use Previous page, Next page, or arrow keys.');
+    this.contentEl.createDiv({ cls: 'ebook-help', text: mode === 'scrolled' ? 'Scroll with your wheel, trackpad, or touch. Chapters load as you read.' : 'Use Previous page / Next page, ← / →, or Page Up / Page Down to read.' });
     this.status = this.contentEl.createDiv({ cls: 'ebook-status', text: 'Opening EPUB…' });
     this.status.setAttribute('role', 'status');
     try {
@@ -198,14 +265,29 @@ export class EbookView extends FileView {
           this.saveTimer = window.setTimeout(() => { void this.plugin.persist().catch(fail); }, 600);
         },
         keydown: event => this.keydown(event)
-      }, this.position);
+      }, this.position, mode, this.plugin.data.settings);
       if (generation !== this.generation) return;
-      this.applyStyle(); this.syncAnnotations(); this.chapters();
+      this.contentEl.dataset.theme = this.plugin.data.settings.theme;
+      this.syncAnnotations(); this.chapters();
+      this.ready = true;
+      if (this.pendingTarget) {
+        const target = this.pendingTarget; this.pendingTarget = undefined;
+        await this.revealTarget(target);
+      }
+      let width = host.clientWidth, height = host.clientHeight;
       this.resize = new ResizeObserver(() => {
-        if (host.clientWidth && host.clientHeight) reader.rendition?.resize(host.clientWidth, host.clientHeight);
+        if (host.clientWidth && host.clientHeight && (width !== host.clientWidth || height !== host.clientHeight)) {
+          width = host.clientWidth; height = host.clientHeight;
+          reader.rendition?.resize(width, height);
+        }
       });
       this.resize.observe(host);
     } catch (e) { if (generation === this.generation) { this.status.setText(`Could not fully open EPUB: ${e instanceof Error ? e.message : e}`); fail(e); } }
+  }
+  private async changeMode(mode: ReadingMode): Promise<void> {
+    this.plugin.data.settings.readingMode = mode;
+    await this.plugin.persist();
+    if (this.file) await this.onLoadFile(this.file);
   }
   private applyStyle(): void { this.reader?.style(this.plugin.data.settings.theme, this.plugin.data.settings.fontSize); this.contentEl.dataset.theme = this.plugin.data.settings.theme; }
   private async font(delta: number): Promise<void> { const s = this.plugin.data.settings; s.fontSize = Math.max(70, Math.min(200, s.fontSize + delta)); this.applyStyle(); await this.plugin.persist(); }
@@ -213,14 +295,27 @@ export class EbookView extends FileView {
     const target = e.target as HTMLElement;
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName)) return;
     const vim = this.plugin.data.settings.vim;
-    if (e.key === 'ArrowRight' || (vim && ['j', 'l'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.next().catch(fail); }
-    if (e.key === 'ArrowLeft' || (vim && ['k', 'h'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.prev().catch(fail); }
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || (vim && ['j', 'l'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.next().catch(fail); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (vim && ['k', 'h'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.prev().catch(fail); }
     if (vim && e.key === 'y') { e.preventDefault(); void this.copyQuote().catch(fail); }
   }
-  async go(cfi: string): Promise<void> { await this.reader?.rendition?.display(cfi); }
+  async go(cfi: string): Promise<void> {
+    await this.loading;
+    if (!this.reader?.rendition || !this.ready) throw new Error('The ebook is not ready. Try reopening it.');
+    await this.reader.rendition.display(cfi);
+  }
+  async openTarget(target: PassageTarget): Promise<void> { await this.loading; await this.revealTarget(target); }
+  private async revealTarget(target: PassageTarget): Promise<void> {
+    const annotation = this.record?.annotations.find(a => a.id === target.annotation);
+    const cfi = annotation?.cfi ?? target.cfi;
+    if (!cfi) throw new Error('This saved annotation no longer exists and the link has no fallback location.');
+    if (!this.reader?.rendition || !this.ready) throw new Error('The ebook is not ready. Try reopening it.');
+    await this.reader.rendition.display(cfi);
+    if (annotation) { this.panelMode = 'annotations'; this.annotations(); }
+  }
   private draft(): Annotation {
     if (!this.selected) throw new Error('Select a passage in the ebook first.');
-    return { id: crypto.randomUUID(), ...this.selected, color: this.color, comment: '', kind: 'highlight', created: new Date().toISOString() };
+    return { id: crypto.randomUUID(), ...this.selected, color: this.color, comment: '', kind: 'highlight', created: new Date().toISOString(), location: this.status.textContent ?? undefined };
   }
   async annotate(comment = false): Promise<void> {
     const draft = this.draft();
@@ -240,15 +335,26 @@ export class EbookView extends FileView {
     this.record.annotations.push({ id: crypto.randomUUID(), cfi: this.position, text: this.status.textContent ?? 'Bookmark', comment: '', color: this.color, kind: 'bookmark', created: new Date().toISOString() });
     await this.plugin.persist(); this.plugin.refresh(this.record); new Notice('Bookmark saved.');
   }
-  private markdown(a: Annotation): string { return quoteMarkdown(this.app.vault.getName(), this.record!, a, this.plugin.data.settings.callouts); }
-  async copyQuote(a?: Annotation): Promise<void> { await navigator.clipboard.writeText(this.markdown(a ?? this.draft())); new Notice('Quote and passage link copied.'); }
+  private markdown(a: Annotation): string { return quoteMarkdown(this.app.vault.getName(), this.record!, a, this.plugin.data.settings.callouts, this.plugin.data.settings); }
+  private async saveSelection(): Promise<Annotation> {
+    const draft = this.draft();
+    const record = this.record!;
+    let annotation = record.annotations.find(a => a.kind === 'highlight' && a.cfi === draft.cfi);
+    if (!annotation) { annotation = draft; record.annotations.push(annotation); }
+    // An existing annotation keeps its color, comment and identity when copied.
+    await this.plugin.persist(); this.plugin.refresh(record);
+    return annotation;
+  }
+  async copyQuote(a?: Annotation): Promise<void> { await navigator.clipboard.writeText(this.markdown(a ?? await this.saveSelection())); new Notice('Quote and saved passage link copied.'); }
   async copyLink(): Promise<void> {
     const cfi = this.selected?.cfi ?? this.position;
     if (!cfi || !this.record) throw new Error('Wait for the book to open.');
-    await navigator.clipboard.writeText(`[Open passage](${passageUrl(this.app.vault.getName(), this.record, cfi)})`); new Notice('Passage link copied.');
+    if (this.selected) await navigator.clipboard.writeText(passageLink(this.record, await this.saveSelection()));
+    else await navigator.clipboard.writeText(`[Open passage](${passageUrl(this.app.vault.getName(), this.record, cfi)})`);
+    new Notice('Passage link copied.');
   }
   private async insertQuote(): Promise<void> {
-    const markdown = this.markdown(this.draft());
+    const markdown = this.markdown(await this.saveSelection());
     const notes = this.app.workspace.getLeavesOfType('markdown').filter(l => l.view instanceof MarkdownView);
     if (!notes.length) throw new Error('Open a Markdown note in another pane first.');
     // Let the user choose the destination instead of guessing among open notes.
@@ -277,6 +383,7 @@ export class EbookView extends FileView {
   }
   private annotations(): void {
     this.panel.empty(); this.panel.createEl('h3', { text: 'Annotations' });
+    this.panel.createEl('p', { cls: 'ebook-muted', text: 'Saved in Ebook Plus data.json, independently of your notes. Copying a quote also saves its highlight.' });
     if (!this.record?.annotations.length) this.panel.createEl('p', { text: 'Select a passage and choose Highlight or Comment. Bookmarks appear here too.' });
     for (const a of this.record?.annotations ?? []) {
       const card = this.panel.createDiv('ebook-card'); card.style.borderInlineStartColor = COLORS[a.color];
@@ -284,7 +391,7 @@ export class EbookView extends FileView {
       if (a.comment) card.createEl('p', { text: a.comment });
       const controls = card.createDiv('ebook-card-actions');
       action(controls, 'Copy', () => this.copyQuote(a));
-      action(controls, 'Embed', async () => { await navigator.clipboard.writeText(embedSource(this.record!, a)); new Notice('Passage embed copied.'); });
+      action(controls, 'Copy callout', async () => { await navigator.clipboard.writeText(quoteMarkdown(this.app.vault.getName(), this.record!, a, true, this.plugin.data.settings)); new Notice('Colored callout copied.'); });
       action(controls, 'Edit', () => {
         const record = this.record!;
         new TextDialog(this.app, 'Edit annotation comment', a.comment, async comment => { a.comment = comment; await this.plugin.persist(); this.plugin.refresh(record); }).open();
@@ -325,6 +432,8 @@ export class EbookView extends FileView {
     await this.app.workspace.getLeaf('tab').openFile(note);
   }
   private async release(): Promise<void> {
+    if (this.ready && this.record) this.record.position = this.reader?.currentCfi() ?? this.record.position;
+    this.ready = false;
     ++this.generation; ++this.searchGeneration; window.clearTimeout(this.saveTimer);
     this.resize?.disconnect(); this.resize = undefined;
     this.reader?.destroy(); this.reader = undefined;
@@ -340,6 +449,9 @@ class EbookSettings extends PluginSettingTab {
   display(): void {
     this.containerEl.empty(); const s = this.plugin.data.settings;
     new Setting(this.containerEl).setName('Quote callouts').setDesc('Export quotes as Obsidian callouts.').addToggle(t => t.setValue(s.callouts).onChange(async value => { s.callouts = value; await this.plugin.persist(); }));
+    new Setting(this.containerEl).setName('Link display template').setDesc('Placeholders: {{file.basename}}, {{location}}, {{color}}. EPUB locations use chapters, not fixed printed pages.').addText(t => t.setValue(s.displayTemplate).onChange(async value => { s.displayTemplate = value.trim() || DEFAULTS.displayTemplate; await this.plugin.persist(); }));
+    new Setting(this.containerEl).setName('Quote template').setDesc('Placeholders: {{linkWithDisplay}}, {{text}}, {{comment}}, {{commentBlock}}, {{color}}, {{calloutType}}, {{file.basename}}, {{location}}. Use [!EPUB|{{color}}] for color. Templates substitute values; they do not execute JavaScript.').addTextArea(t => t.setValue(s.quoteTemplate).onChange(async value => { s.quoteTemplate = value.trim() ? value : DEFAULTS.quoteTemplate; await this.plugin.persist(); }));
+    new Setting(this.containerEl).setName('Reset copy templates').addButton(b => b.setButtonText('Restore defaults').onClick(async () => { s.quoteTemplate = DEFAULTS.quoteTemplate; s.displayTemplate = DEFAULTS.displayTemplate; await this.plugin.persist(); this.display(); }));
     new Setting(this.containerEl).setName('Vim navigation').setDesc('Inside the book: h/k previous, j/l next, y copy quote. Arrow keys always work.').addToggle(t => t.setValue(s.vim).onChange(async value => { s.vim = value; await this.plugin.persist(); }));
     new Setting(this.containerEl).setName('Annotation notes folder').addText(t => t.setValue(s.notesFolder).onChange(async value => { try { s.notesFolder = safeFolder(value); await this.plugin.persist(); } catch (e) { fail(e); } }));
     if (Platform.isDesktopApp) new Setting(this.containerEl).setName('Calibre executable').setDesc('Path to ebook-convert, or ebook-convert if available on PATH. Right-click a MOBI/AZW/AZW3/FB2 file in the vault to convert it.').addText(t => t.setValue(s.calibre).onChange(async value => { s.calibre = value.trim() || 'ebook-convert'; await this.plugin.persist(); }));

@@ -16,11 +16,12 @@ const app: any = {
   workspace: {
     on: () => {},
     getLeavesOfType: (type: string) => type === 'ebook-plus-reader' ? [leaf] : [],
-    getLeaf: () => ({ openFile: async () => {} }),
+    getLeaf: () => leaf,
+    revealLeaf: async () => {},
     getActiveViewOfType: () => view
   }
 };
-const leaf: any = { app };
+const leaf: any = { app, openFile: async (opened: any) => { if (opened.extension === 'epub') { view.file = opened; await view.onLoadFile(opened); } }, loadIfDeferred: async () => {} };
 const plugin = new EbookPlus(app, {} as any);
 const view = new EbookView(leaf, plugin); leaf.view = view; view.file = file as any;
 async function boot() { await plugin.onload(); await view.onLoadFile(file as any); document.body.dataset.ready = 'true'; }

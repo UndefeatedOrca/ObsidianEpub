@@ -1,7 +1,7 @@
 import ePub, { Book, Rendition, Contents } from 'epubjs';
 import type { Location } from 'epubjs/types/rendition';
 import type Section from 'epubjs/types/section';
-import { Annotation, COLORS } from './model';
+import { Annotation, COLORS, ReadingMode } from './model';
 
 // Sandboxed EPUB frames cannot execute scripts. CSP also prevents remote tracking
 // resources and document forms; local archive resources are rewritten to blob URLs.
@@ -36,7 +36,7 @@ export class Reader {
     this.opening = this.book.open(bytes, 'binary');
     this.opening.catch(() => {});
   }
-  async mount(host: HTMLElement, callbacks: ReaderCallbacks, position?: string): Promise<void> {
+  async mount(host: HTMLElement, callbacks: ReaderCallbacks, position?: string, mode: ReadingMode = 'paginated', appearance = { theme: 'sepia', fontSize: 110 }): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -45,14 +45,16 @@ export class Reader {
       ]);
     } finally { clearTimeout(timer); }
     if (this.destroyed) return;
-    this.rendition = this.book.renderTo(host, { width: '100%', height: '100%', spread: 'none', allowScriptedContent: false });
+    this.rendition = this.book.renderTo(host, { width: '100%', height: '100%', spread: 'none', allowScriptedContent: false,
+      flow: mode === 'scrolled' ? 'scrolled-doc' : 'paginated', manager: mode === 'scrolled' ? 'continuous' : 'default', overflow: mode === 'scrolled' ? 'auto' : 'hidden' });
+    this.style(appearance.theme, appearance.fontSize);
     this.rendition.on('selected', (cfi: string, contents: Contents) => {
       const text = contents.window.getSelection()?.toString().trim();
       if (text) callbacks.selected(cfi, text);
     });
     this.rendition.on('relocated', (location: Location) => {
       const part = location.start;
-      callbacks.relocated(part.cfi, `Chapter ${part.index + 1} · page ${part.displayed.page} of ${part.displayed.total}`);
+      callbacks.relocated(part.cfi, mode === 'scrolled' ? `Chapter ${part.index + 1} · scroll to read` : `Chapter ${part.index + 1} · page ${part.displayed.page} of ${part.displayed.total}`);
     });
     this.rendition.on('keydown', callbacks.keydown);
     this.rendition.hooks.content.register((contents: Contents) => {
@@ -81,6 +83,12 @@ export class Reader {
     if (a.kind === 'highlight') this.rendition?.annotations.highlight(a.cfi, { id: a.id }, clicked, 'ebook-highlight', { fill: COLORS[a.color], 'fill-opacity': '0.35', 'mix-blend-mode': 'multiply' });
   }
   remove(a: Annotation): void { if (a.kind === 'highlight') this.rendition?.annotations.remove(a.cfi, 'highlight'); }
+  currentCfi(): string | undefined {
+    // Read the viewport directly: relocated is debounced during scrolling.
+    // epub.js's declaration incorrectly describes this as DisplayedLocation.
+    const location = this.rendition?.currentLocation() as unknown as Location | undefined;
+    return location?.start?.cfi;
+  }
   async search(query: string, cancelled: () => boolean): Promise<{ cfi: string; excerpt: string }[]> {
     const results: { cfi: string; excerpt: string }[] = [];
     const sections: Section[] = [];
