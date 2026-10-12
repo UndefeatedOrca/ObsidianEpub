@@ -12,6 +12,7 @@ Verified on Windows on October 12, 2026.
 | Unsupported conversion format rejection | Passed |
 | npm dependency audit after updates | 0 reported vulnerabilities |
 | Distribution folder and ZIP generation | Passed |
+| Attribution regression checks and packaged notice comparison | 7 passed |
 
 Browser tests render a real, locally generated, two-chapter EPUB. They cover CSS loading, text selection and exact CFI round trips, highlight drawing/removal/restoration, chapter search, theme changes, blocked script execution and remote images, and malformed archive errors. A public-API Obsidian adapter also exercises the actual plugin UI: comment creation, persistence/reopening, bookmarks, export without overwrite, text embeds, rename handling, and deletion undo.
 

@@ -43,7 +43,15 @@ Book scripts, forms, frames and remote resources are blocked. External links ins
 
 This implements the central reading → highlighting → linked notes workflow, not all PDF++ features. Annotations are stored by Ebook Plus and shown in its reader. Arbitrary incoming backlinks do not automatically create highlights. Native backlink overlays, hover passage previews, rectangular image excerpts, write-back into EPUB, annotation interchange and full PDF++ shortcut/custom-template parity are not implemented.
 
-PDF++ is a separate project by Ryota Ushio. No PDF++ source code is included. See [the implementation plan](PLAN.md) for references and scope.
+PDF++ is a separate project by [Ryota Ushio](https://github.com/RyotaUshio/obsidian-pdf-plus). No PDF++ source code is included. Ebook Plus is an independent project and is not affiliated with or endorsed by PDF++ or Obsidian. See [the implementation plan](PLAN.md) for references and scope.
+
+## License and attribution
+
+Maintained by **UndefeatedOrca**. Ebook Plus code is licensed under [MIT](LICENSE). Dependencies retain their own licenses; their notices are collected in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and included in the release ZIP. JSZip is used under its MIT license option. Calibre is a separately installed application and is not redistributed here.
+
+The notice generator includes licenses embedded in READMEs and source headers as well as root license files. [Supplemental notices](licenses/) record provenance for packages that omit a standalone license file. In particular, marks-pane declares MIT and credits Fred Chasen in its package metadata; its supplemental notice includes the standard MIT text and author attribution without inventing an upstream copyright year. Packaging fails if a production dependency lacks collected license text or a specially handled dependency changes version without review.
+
+For GitHub releases, publish the complete ZIP with its license and notice files and mark this initial release as a prerelease. Actual Obsidian host validation is still pending; see [TESTING.md](TESTING.md).
 
 ## Development
 
@@ -54,6 +62,7 @@ npm run test:browser
 npm run test:conversion
 npm run build
 npm run package
+npm run test:notices
 ```
 
 `npm run dev` watches source files. Copy `main.js`, `manifest.json` and `styles.css` into a development vault's plugin folder to test in Obsidian. `npm run package` produces a folder and ZIP under `dist/`.
