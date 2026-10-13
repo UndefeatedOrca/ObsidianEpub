@@ -1,12 +1,12 @@
-# Verification for 0.3.0
+# Verification for 0.3.1
 
 Verified on Windows on October 12, 2026.
 
 | Check | Result |
 | --- | --- |
 | TypeScript strict typecheck and bundled plugin build | Passed |
-| Model tests | 20 passed |
-| Browser tests in headless Microsoft Edge | 13 passed |
+| Model tests | 22 passed |
+| Browser tests in headless Microsoft Edge | 13 passed for 0.3.0; reader unchanged in 0.3.1 |
 | Calibre 6.1 MOBI → EPUB round trip | Passed |
 | Calibre 6.1 AZW3 → EPUB round trip | Passed |
 | Unsupported conversion format rejection | Passed |
@@ -21,6 +21,8 @@ Conversion tests invoke the actual installed Calibre executable with paths conta
 The 0.2.0 additions verify page buttons, actual wheel scrolling, mode persistence, native colored callout links, legacy protocol clicks, highlight creation/deduplication on copy, saved color preservation, opening during file load, and deferred-reader protocol navigation. Calibre conversion was verified in 0.1.0; the conversion implementation is unchanged. The template/data tests verify migration defaults and exact annotation preservation from 0.1.0 data.
 
 The 0.3.0 additions test top-passage pixel alignment after repeated zoom in both modes; cancellation of delayed alignment when the user scrolls; chapter-boundary paging in both directions; real iframe hover/click annotation bubbles; sidebar focus without moving the reader; backlink note/line navigation; distinct callout backgrounds with both legacy and current theme color conventions; and scroll stability after idle and selection-toolbar updates. Model tests cover stable-ID backlink matching, exact-CFI fallback, encoded paths, duplicate mentions, wrong-book/annotation rejection, and refreshed cache contents. These checks use an original reflowable book, not a broad publisher corpus.
+
+The 0.3.1 model checks verify nested passage formatting, multi-paragraph/CRLF text, comment separation, empty comments, migration of the prior default template, and preservation of custom templates. Build and package attribution checks were rerun.
 
 ## Host validation still needed
 

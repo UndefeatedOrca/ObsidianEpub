@@ -4,7 +4,7 @@ An EPUB reader that connects book passages to your Markdown notes, inspired by P
 
 ## Install
 
-1. Download or build `dist/ebook-plus-0.3.0.zip`.
+1. Download or build `dist/ebook-plus-0.3.1.zip`.
 2. Extract its `ebook-plus` folder into `<vault>/.obsidian/plugins/`.
 3. Reload Obsidian and enable **Ebook Plus** under Community plugins.
 4. Add an EPUB to the vault and click it. If another plugin handles EPUBs, disable that handler first.
@@ -36,9 +36,22 @@ The default copy format resembles PDF++'s colored callouts:
 
 This example uses placeholders; Copy quote generates the actual IDs and encoded CFI. The file link gives Obsidian a backlink and opens the matching saved highlight. The CFI is a fallback when annotation data is unavailable. Links also resolve through the persistent book ID after a rename while the plugin is enabled. Yellow, green, blue, pink and purple callouts are styled by the plugin in reading mode and Live Preview. Their Markdown text and color are snapshots: editing a saved highlight later does not rewrite pasted notes.
 
-In settings, **Link display template** controls the title, and **Quote template** controls the copied Markdown. Supported placeholders: `{{file.basename}}`, `{{file.path}}`, `{{location}}`, `{{color}}` / `{{colorName}}`, `{{calloutType}}`, `{{linkWithDisplay}}` / `{{link}}`, `{{display}}`, `{{text}}`, `{{comment}}`, and `{{commentBlock}}` (a complete quoted comment). Display templates support the file/location/color variables. Templates substitute these values; they do not evaluate JavaScript expressions. Use `EPUB` as the callout type for the included color styling. Reset copy templates restores defaults.
+In settings, **Link display template** controls the title, and **Quote template** controls the copied Markdown. Supported placeholders: `{{file.basename}}`, `{{file.path}}`, `{{location}}`, `{{color}}` / `{{colorName}}`, `{{calloutType}}`, `{{linkWithDisplay}}` / `{{link}}`, `{{display}}`, `{{text}}`, `{{quoteBlock}}` (complete nested passage blockquote, preserving paragraph breaks), `{{comment}}`, and `{{commentBlock}}` (a complete quoted comment). Display templates support the file/location/color variables. Templates substitute these values; they do not evaluate JavaScript expressions. Use `EPUB` as the callout type for the included color styling. Reset copy templates restores defaults.
 
 Locations describe the current chapter and, in Pages mode, its current layout page. These labels are informational: the link anchors to text, so changing font size or reading mode does not rely on the page label remaining the same.
+
+The default callout nests the book passage in a blockquote, with your comment underneath at the outer callout level:
+
+```markdown
+> [!EPUB|green] [[Book.epub#...|Book, passage]]
+> > First paragraph from the book.
+> >
+> > Second paragraph from the book.
+>
+> Your annotation or question.
+```
+
+The previous default template upgrades automatically. Custom templates remain unchanged; use `{{quoteBlock}}` on its own line to get the nested passage, or restore the default templates in settings. Previously pasted notes are not rewritten.
 
 ## Annotation bubbles and highlight backlinks
 

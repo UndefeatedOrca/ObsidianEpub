@@ -13,3 +13,7 @@ Verification: build passed, 20 model tests passed, 13 browser tests passed, 7 no
 Changes remain in the working tree. The generated fixture was restored to HEAD because only ZIP timestamps changed. No ongoing test process remains.
 
 Remaining compatibility limits are documented in README.md and TESTING.md: actual Obsidian desktop/mobile host verification, broad publisher/fixed-layout/RTL corpus, zoom alignment at chapter scroll boundaries, and linked-note text previews. Backlinks refresh when opening a bubble; they are not live-updated while it remains open. Legacy external protocol URLs are not indexed as linked mentions.
+
+## 0.3.1 follow-up
+
+Copied callouts now nest the passage with paragraph breaks, leaving comments at the outer callout level. The old default template migrates automatically; custom templates remain unchanged. Added quoteBlock placeholder. Model tests: 22 passed. Release: dist/ebook-plus-0.3.1.zip.

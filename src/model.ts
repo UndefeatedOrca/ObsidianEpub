@@ -8,7 +8,8 @@ export interface BookRecord { id: string; path: string; position?: string; annot
 export type ReadingMode = 'paginated' | 'scrolled';
 export interface Settings { fontSize: number; theme: 'light' | 'dark' | 'sepia'; vim: boolean; calibre: string; notesFolder: string; callouts: boolean; readingMode: ReadingMode; quoteTemplate: string; displayTemplate: string }
 export interface Data { version: 1; settings: Settings; books: Record<string, BookRecord> }
-export const DEFAULTS: Settings = { fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true, readingMode: 'paginated', quoteTemplate: '> [!EPUB|{{color}}] {{linkWithDisplay}}\n> {{text}}\n{{commentBlock}}', displayTemplate: '{{file.basename}}, {{location}}' };
+const LEGACY_QUOTE_TEMPLATE = '> [!EPUB|{{color}}] {{linkWithDisplay}}\n> {{text}}\n{{commentBlock}}';
+export const DEFAULTS: Settings = { fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true, readingMode: 'paginated', quoteTemplate: '> [!EPUB|{{color}}] {{linkWithDisplay}}\n{{quoteBlock}}\n{{commentBlock}}', displayTemplate: '{{file.basename}}, {{location}}' };
 export function emptyData(): Data { return { version: 1, settings: { ...DEFAULTS }, books: {} }; }
 export function isCfi(value: unknown): value is string { return typeof value === 'string' && /^epubcfi\(.+\)$/.test(value) && value.length < 8192; }
 export function hydrate(raw: unknown): Data {
@@ -25,7 +26,7 @@ export function hydrate(raw: unknown): Data {
     if (typeof s.calibre === 'string') result.settings.calibre = s.calibre;
     if (typeof s.notesFolder === 'string') result.settings.notesFolder = s.notesFolder;
     if (s.readingMode === 'paginated' || s.readingMode === 'scrolled') result.settings.readingMode = s.readingMode;
-    if (typeof s.quoteTemplate === 'string' && s.quoteTemplate.trim()) result.settings.quoteTemplate = s.quoteTemplate;
+    if (typeof s.quoteTemplate === 'string' && s.quoteTemplate.trim()) result.settings.quoteTemplate = s.quoteTemplate.replace(/\r\n/g, '\n') === LEGACY_QUOTE_TEMPLATE ? DEFAULTS.quoteTemplate : s.quoteTemplate;
     if (typeof s.displayTemplate === 'string' && s.displayTemplate.trim()) result.settings.displayTemplate = s.displayTemplate;
   }
   for (const [id, b] of Object.entries(data.books ?? {})) {
@@ -61,9 +62,11 @@ export function quoteMarkdown(_vault: string, book: BookRecord, a: Annotation, c
   const values: Record<string, string> = { 'file.basename': book.path.split('/').pop()!.replace(/\.epub$/i, ''), 'file.path': book.path, location: a.location || 'passage', color: a.color, colorName: a.color, calloutType: 'EPUB' };
   const display = renderTemplate(settings.displayTemplate, values);
   const link = passageLink(book, a, display);
-  const text = escapeMarkdown(a.text || 'Bookmark').replace(/\r?\n/g, '\n> ');
+  const passage = escapeMarkdown(a.text || 'Bookmark').replace(/\r\n?/g, '\n');
+  const text = passage.replace(/\n/g, '\n> ');
+  const quoteBlock = passage.split('\n').map(line => line ? `> > ${line}` : '> >').join('\n');
   const comment = escapeMarkdown(a.comment).replace(/\r?\n/g, '\n> ');
-  return renderTemplate(callout ? settings.quoteTemplate : '> {{text}}\n>\n> {{linkWithDisplay}}\n{{commentBlock}}', { ...values, display, linkWithDisplay: link, link, text, comment, commentBlock: a.comment ? `>\n> ${comment}\n` : '' }).trimEnd() + '\n';
+  return renderTemplate(callout ? settings.quoteTemplate : '> {{text}}\n>\n> {{linkWithDisplay}}\n{{commentBlock}}', { ...values, display, linkWithDisplay: link, link, text, quoteBlock, comment, commentBlock: a.comment ? `>\n> ${comment}\n` : '' }).trimEnd() + '\n';
 }
 export function embedSource(book: BookRecord, a: Annotation): string {
   return '```ebook\n' + JSON.stringify({ book: book.id, annotation: a.id }, null, 2) + '\n```';

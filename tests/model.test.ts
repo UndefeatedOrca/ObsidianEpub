@@ -21,7 +21,7 @@ describe('durable passage links and notes', () => {
   it('exports quoted lines, comments, exact anchors and ordinary file backlinks', () => {
     const markdown = quoteMarkdown('vault', book, a, true);
     expect(markdown).toContain('> [!EPUB|yellow]');
-    expect(markdown).toContain('> A \\[quote\\]\n> second line');
+    expect(markdown).toContain('> > A \\[quote\\]\n> > second line');
     expect(markdown).toContain('> My thought\n> continued');
     expect(markdown).toContain('Books/A%20%231%20&%20B.epub');
     expect(markdown).toContain('annotation=a');
@@ -30,6 +30,21 @@ describe('durable passage links and notes', () => {
   it('embeds by annotation identity instead of embedding book HTML', () => {
     expect(embedSource(book, a)).toContain('"annotation": "a"');
     expect(embedSource(book, a)).not.toContain(a.text);
+  });
+  it('keeps paragraph breaks inside the nested passage and comments outside it', () => {
+    const result = quoteMarkdown('v', book, { ...a, text: 'First paragraph.\r\n\r\nSecond paragraph.\nContinued.', comment: 'Is this true?\n\nCheck the source.' }, true);
+    expect(result.split('\n').slice(1)).toEqual([
+      '> > First paragraph.', '> >', '> > Second paragraph.', '> > Continued.',
+      '>', '> Is this true?', '> ', '> Check the source.', ''
+    ]);
+    expect(quoteMarkdown('v', book, { ...a, text: 'Passage.', comment: '' }, true)).toMatch(/\n> > Passage\.\n$/);
+  });
+  it('upgrades the old default template while retaining custom templates', () => {
+    const old = '> [!EPUB|{{color}}] {{linkWithDisplay}}\n> {{text}}\n{{commentBlock}}';
+    expect(hydrate({ settings: { quoteTemplate: old } }).settings.quoteTemplate).toBe(DEFAULTS.quoteTemplate);
+    const custom = '> [!note] My source\n> {{text}}';
+    expect(hydrate({ settings: { quoteTemplate: custom } }).settings.quoteTemplate).toBe(custom);
+    expect(quoteMarkdown('v', book, a, true, { ...DEFAULTS, quoteTemplate: custom })).toContain('> A \\[quote\\]\n> second line');
   });
   it('round trips a native wikilink to a saved colored highlight', () => {
     const link = passageLink({ ...book, path: 'Books/A & B.epub' }, { ...a, color: 'pink' });
