@@ -2,6 +2,7 @@ import { FileView, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingT
 import type { App } from 'obsidian';
 import { Annotation, BookRecord, COLORS, Color, CONVERTIBLE, Data, DEFAULTS, hydrate, isCfi, passageUrl, passageLink, parsePassage, PassageTarget, ReadingMode, quoteMarkdown, safeFolder } from './model';
 import { Reader } from './reader';
+import { highlightBacklinks } from './backlinks';
 
 const VIEW = 'ebook-plus-reader';
 function fail(error: unknown): void { console.error('Ebook Plus:', error); new Notice(error instanceof Error ? error.message : String(error), 8000); }
@@ -79,8 +80,8 @@ export default class EbookPlus extends Plugin {
       ['copy-link', 'Copy ebook passage link', v => v.copyLink()],
       ['bookmark', 'Bookmark current ebook location', v => v.bookmark()],
       ['export', 'Export ebook annotations to a note', v => v.exportNotes()],
-      ['next', 'Next ebook page', v => v.reader?.rendition?.next()],
-      ['previous', 'Previous ebook page', v => v.reader?.rendition?.prev()]
+      ['next', 'Next ebook page', v => v.reader?.next()],
+      ['previous', 'Previous ebook page', v => v.reader?.prev()]
     ];
     for (const [id, name, run] of commands) this.addCommand({ id, name, checkCallback: checking => {
       const view = this.app.workspace.getActiveViewOfType(EbookView);
@@ -182,9 +183,20 @@ export class EbookView extends FileView {
   private loading: Promise<void> = Promise.resolve();
   private ready = false;
   private pendingTarget?: PassageTarget;
+  private bubble?: HTMLElement;
+  private bubbleId?: string;
+  private bubblePinned = false;
+  private bubbleTimer?: ReturnType<typeof setTimeout>;
   constructor(leaf: WorkspaceLeaf, readonly plugin: EbookPlus) {
     super(leaf);
     this.registerDomEvent(this.contentEl, 'keydown', event => this.keydown(event));
+    this.registerDomEvent(this.contentEl.ownerDocument, 'keydown', event => { if (event.key === 'Escape') this.closeBubble(); });
+    this.registerDomEvent(this.contentEl.ownerDocument, 'pointerdown', event => {
+      if (this.bubble && !this.bubble.contains(event.target as Node)) this.closeBubble();
+    });
+    this.registerDomEvent(this.contentEl, 'scroll', event => {
+      if (!(event.target as Element).closest?.('.ebook-panel')) this.closeBubble();
+    }, true);
   }
   getViewType(): string { return VIEW; }
   getDisplayText(): string { return this.file?.basename ?? 'Ebook Plus'; }
@@ -219,8 +231,8 @@ export class EbookView extends FileView {
     modeSelect.createEl('option', { value: 'scrolled', text: 'Scroll' });
     modeSelect.value = mode;
     modeSelect.onchange = () => { modeSelect.disabled = true; void this.changeMode(modeSelect.value as ReadingMode).catch(fail); };
-    action(bar, mode === 'paginated' ? '← Previous page' : '↑ Back', () => this.reader?.rendition?.prev());
-    action(bar, mode === 'paginated' ? 'Next page →' : 'Forward ↓', () => this.reader?.rendition?.next());
+    action(bar, mode === 'paginated' ? '← Previous page' : '↑ Back', () => this.reader?.prev());
+    action(bar, mode === 'paginated' ? 'Next page →' : 'Forward ↓', () => this.reader?.next());
     action(bar, 'Chapters', () => { this.panelMode = 'chapters'; this.chapters(); });
     action(bar, 'Annotations', () => { this.panelMode = 'annotations'; this.annotations(); });
     action(bar, 'Search', () => this.searchPanel());
@@ -229,7 +241,7 @@ export class EbookView extends FileView {
     const theme = bar.createEl('select', { attr: { 'aria-label': 'Reader theme' } });
     for (const name of ['light', 'sepia', 'dark']) theme.createEl('option', { value: name, text: name });
     theme.value = this.plugin.data.settings.theme;
-    theme.onchange = () => { this.plugin.data.settings.theme = theme.value as typeof this.plugin.data.settings.theme; this.applyStyle(); void this.plugin.persist().catch(fail); };
+    theme.onchange = () => { this.plugin.data.settings.theme = theme.value as typeof this.plugin.data.settings.theme; void this.applyStyle().then(() => this.plugin.persist()).catch(fail); };
     action(bar, 'A−', () => this.font(-10)); action(bar, 'A+', () => this.font(10));
     const selection = this.contentEl.createDiv('ebook-selection');
     this.selectionLabel = selection.createSpan({ text: 'Select text in the book to highlight or quote it.' });
@@ -264,7 +276,9 @@ export class EbookView extends FileView {
           window.clearTimeout(this.saveTimer);
           this.saveTimer = window.setTimeout(() => { void this.plugin.persist().catch(fail); }, 600);
         },
-        keydown: event => this.keydown(event)
+        keydown: event => this.keydown(event),
+        annotation: (a, x, y, pinned) => this.showAnnotation(a, x, y, pinned),
+        dismissAnnotation: force => this.dismissBubble(force)
       }, this.position, mode, this.plugin.data.settings);
       if (generation !== this.generation) return;
       this.contentEl.dataset.theme = this.plugin.data.settings.theme;
@@ -278,7 +292,7 @@ export class EbookView extends FileView {
       this.resize = new ResizeObserver(() => {
         if (host.clientWidth && host.clientHeight && (width !== host.clientWidth || height !== host.clientHeight)) {
           width = host.clientWidth; height = host.clientHeight;
-          reader.rendition?.resize(width, height);
+          reader.resize(width, height);
         }
       });
       this.resize.observe(host);
@@ -289,14 +303,14 @@ export class EbookView extends FileView {
     await this.plugin.persist();
     if (this.file) await this.onLoadFile(this.file);
   }
-  private applyStyle(): void { this.reader?.style(this.plugin.data.settings.theme, this.plugin.data.settings.fontSize); this.contentEl.dataset.theme = this.plugin.data.settings.theme; }
-  private async font(delta: number): Promise<void> { const s = this.plugin.data.settings; s.fontSize = Math.max(70, Math.min(200, s.fontSize + delta)); this.applyStyle(); await this.plugin.persist(); }
+  private async applyStyle(): Promise<void> { await this.reader?.restyle(this.plugin.data.settings.theme, this.plugin.data.settings.fontSize); this.contentEl.dataset.theme = this.plugin.data.settings.theme; }
+  private async font(delta: number): Promise<void> { const s = this.plugin.data.settings; s.fontSize = Math.max(70, Math.min(200, s.fontSize + delta)); await this.applyStyle(); await this.plugin.persist(); }
   private keydown(e: KeyboardEvent): void {
     const target = e.target as HTMLElement;
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName)) return;
     const vim = this.plugin.data.settings.vim;
-    if (e.key === 'ArrowRight' || e.key === 'PageDown' || (vim && ['j', 'l'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.next().catch(fail); }
-    if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (vim && ['k', 'h'].includes(e.key))) { e.preventDefault(); void this.reader?.rendition?.prev().catch(fail); }
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || (vim && ['j', 'l'].includes(e.key))) { e.preventDefault(); void this.reader?.next().catch(fail); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (vim && ['k', 'h'].includes(e.key))) { e.preventDefault(); void this.reader?.prev().catch(fail); }
     if (vim && e.key === 'y') { e.preventDefault(); void this.copyQuote().catch(fail); }
   }
   async go(cfi: string): Promise<void> {
@@ -311,7 +325,7 @@ export class EbookView extends FileView {
     if (!cfi) throw new Error('This saved annotation no longer exists and the link has no fallback location.');
     if (!this.reader?.rendition || !this.ready) throw new Error('The ebook is not ready. Try reopening it.');
     await this.reader.rendition.display(cfi);
-    if (annotation) { this.panelMode = 'annotations'; this.annotations(); }
+    if (annotation) this.focusAnnotation(annotation);
   }
   private draft(): Annotation {
     if (!this.selected) throw new Error('Select a passage in the ebook first.');
@@ -363,12 +377,65 @@ export class EbookView extends FileView {
     modal.open();
   }
   syncAnnotations(): void {
+    this.closeBubble();
     for (const a of this.drawn) this.reader?.remove(a);
     this.drawn = this.record?.annotations.map(a => ({ ...a })) ?? [];
     for (const a of this.drawn) {
-      try { this.reader?.highlight(a, () => { this.panelMode = 'annotations'; this.annotations(); }); } catch (e) { console.warn('Unresolved ebook annotation', a.id, e); }
+      try { this.reader?.highlight(a, () => {}); } catch (e) { console.warn('Unresolved ebook annotation', a.id, e); }
     }
     if (this.panelMode === 'annotations') this.annotations();
+  }
+  private closeBubble(): void { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; this.bubble?.remove(); this.bubble = undefined; this.bubbleId = undefined; this.bubblePinned = false; }
+  private dismissBubble(force: boolean): void {
+    if (force) { this.closeBubble(); return; }
+    if (this.bubblePinned || this.bubbleTimer) return;
+    this.bubbleTimer = setTimeout(() => { this.bubbleTimer = undefined; if (!this.bubble?.matches(':hover')) this.closeBubble(); }, 350);
+  }
+  private focusAnnotation(a: Annotation): void {
+    this.panelMode = 'annotations'; this.annotations();
+    const card = Array.from(this.panel.querySelectorAll<HTMLElement>('.ebook-card')).find(el => el.dataset.annotation === a.id);
+    if (card) {
+      card.addClass('ebook-card-active');
+      // Scroll only the sidebar; scrollIntoView can move the entire reader pane.
+      this.panel.scrollTop += card.getBoundingClientRect().top - this.panel.getBoundingClientRect().top - 12;
+    }
+  }
+  private showAnnotation(a: Annotation, x: number, y: number, pinned: boolean): void {
+    clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined;
+    if (this.bubbleId === a.id) { this.bubblePinned ||= pinned; return; }
+    if (this.bubblePinned && !pinned) return;
+    this.closeBubble(); this.bubbleId = a.id; this.bubblePinned = pinned;
+    const bubble = this.bubble = this.contentEl.ownerDocument.body.createDiv('ebook-annotation-bubble');
+    bubble.setAttribute('role', 'dialog'); bubble.setAttribute('aria-label', 'Ebook annotation');
+    bubble.style.borderColor = COLORS[a.color];
+    bubble.createEl('strong', { text: `${a.color} highlight` });
+    action(bubble, 'Close annotation', () => this.closeBubble()).addClass('ebook-bubble-close');
+    bubble.createEl('blockquote', { text: a.text });
+    bubble.createEl('p', { text: a.comment || 'No comment yet.', cls: 'ebook-bubble-comment' });
+    const controls = bubble.createDiv('ebook-card-actions');
+    action(controls, 'Copy link', () => navigator.clipboard.writeText(passageLink(this.record!, a)));
+    action(controls, 'Copy quote', () => this.copyQuote(a));
+    action(controls, 'Show in list', () => this.focusAnnotation(a));
+    action(controls, 'Edit comment', () => {
+      const record = this.record!; this.closeBubble();
+      new TextDialog(this.app, 'Edit annotation comment', a.comment, async comment => {
+        const saved = record.annotations.find(item => item.id === a.id);
+        if (saved) saved.comment = comment;
+        await this.plugin.persist(); this.plugin.refresh(record);
+      }).open();
+    });
+    const backlinks = highlightBacklinks(this.app, this.record!, a);
+    bubble.createEl('h4', { text: `Linked mentions (${backlinks.length})` });
+    if (!backlinks.length) bubble.createEl('p', { text: 'Paste a copied highlight link or callout into a note to see it here.', cls: 'ebook-muted' });
+    for (const hit of backlinks) action(bubble, `${hit.file.path} · line ${hit.line + 1}`, async () => {
+      this.closeBubble();
+      await this.app.workspace.getLeaf('tab').openFile(hit.file, { eState: { line: hit.line } });
+    }).addClass('ebook-backlink');
+    const win = this.contentEl.ownerDocument.defaultView!;
+    bubble.style.left = `${Math.max(8, Math.min(x, win.innerWidth - bubble.offsetWidth - 8))}px`;
+    bubble.style.top = `${Math.max(8, Math.min(y + 16, win.innerHeight - bubble.offsetHeight - 8))}px`;
+    bubble.addEventListener('mouseleave', () => { if (!this.bubblePinned) this.closeBubble(); });
+    bubble.addEventListener('mouseenter', () => { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; });
   }
   private chapters(): void {
     this.panel.empty(); this.panel.createEl('h3', { text: 'Contents' });
@@ -386,7 +453,7 @@ export class EbookView extends FileView {
     this.panel.createEl('p', { cls: 'ebook-muted', text: 'Saved in Ebook Plus data.json, independently of your notes. Copying a quote also saves its highlight.' });
     if (!this.record?.annotations.length) this.panel.createEl('p', { text: 'Select a passage and choose Highlight or Comment. Bookmarks appear here too.' });
     for (const a of this.record?.annotations ?? []) {
-      const card = this.panel.createDiv('ebook-card'); card.style.borderInlineStartColor = COLORS[a.color];
+      const card = this.panel.createDiv('ebook-card'); card.dataset.annotation = a.id; card.style.borderInlineStartColor = COLORS[a.color];
       action(card, `${a.kind === 'bookmark' ? '🔖 ' : ''}${a.text.slice(0, 160)}`, () => this.go(a.cfi)).addClass('ebook-excerpt');
       if (a.comment) card.createEl('p', { text: a.comment });
       const controls = card.createDiv('ebook-card-actions');
@@ -432,6 +499,7 @@ export class EbookView extends FileView {
     await this.app.workspace.getLeaf('tab').openFile(note);
   }
   private async release(): Promise<void> {
+    this.closeBubble();
     if (this.ready && this.record) this.record.position = this.reader?.currentCfi() ?? this.record.position;
     this.ready = false;
     ++this.generation; ++this.searchGeneration; window.clearTimeout(this.saveTimer);

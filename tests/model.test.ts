@@ -63,3 +63,38 @@ describe('data validation', () => {
   it.each(['../outside', 'notes/../../outside', 'C:\\notes', '/absolute', 'notes/*'])('rejects unsafe notes directory %s', path => { expect(() => safeFolder(path)).toThrow(); });
   it('normalizes safe relative folders', () => { expect(safeFolder('Reading\\Notes')).toBe('Reading/Notes'); expect(safeFolder('')).toBe(''); });
 });
+
+// Annotation backlinks come from Obsidian's parsed metadata, not a raw-text scan.
+import { highlightBacklinks } from '../src/backlinks';
+import type { App } from 'obsidian';
+describe('highlight backlinks', () => {
+  const reference = (link: string, line = 3) => ({ link, position: { start: { line } } });
+  function harness(links: ReturnType<typeof reference>[]) {
+    const file = { path: 'Research.md' };
+    const cache = { links, embeds: [] as ReturnType<typeof reference>[] };
+    const app = { vault: { getMarkdownFiles: () => [file] }, metadataCache: { getFileCache: () => cache, getFirstLinkpathDest: (path: string) => path === book.path ? book : undefined } } as unknown as App;
+    return { app, cache, file };
+  }
+  it('matches stable IDs after rename, separates highlights and ignores whole-book links', () => {
+    const { app } = harness([
+      reference('Old.epub#ebook=stable-id&annotation=a'),
+      reference('Old.epub#ebook=wrong&annotation=a', 4),
+      reference('Old.epub#ebook=stable-id&annotation=other', 5),
+      reference(book.path, 6),
+      reference('Old.epub#ebook=stable-id&annotation=other&cfi=' + encodeURIComponent(cfi), 7)
+    ]);
+    expect(highlightBacklinks(app, book, a).map(hit => hit.line)).toEqual([3]);
+  });
+  it('supports encoded path + CFI fallback and cached embeds, deduplicates same-line links', () => {
+    const link = encodeURI(book.path).replace('#', '%23') + '#cfi=' + encodeURIComponent(cfi);
+    const { app, cache } = harness([reference(link), reference(link)]);
+    cache.embeds.push(reference(link, 9));
+    expect(highlightBacklinks(app, book, a).map(hit => hit.line)).toEqual([3, 9]);
+  });
+  it('reflects edited/deleted mentions on the next query and tolerates malformed links', () => {
+    const { app, cache } = harness([reference('Old.epub#ebook=stable-id&annotation=a'), reference('X#cfi=invalid')]);
+    expect(highlightBacklinks(app, book, a)).toHaveLength(1);
+    cache.links = [];
+    expect(highlightBacklinks(app, book, a)).toEqual([]);
+  });
+});

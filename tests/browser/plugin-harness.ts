@@ -6,12 +6,17 @@ const notes: { path: string; body: string }[] = [];
 const events: Record<string, Function> = {};
 const app: any = {
   vault: {
+    getMarkdownFiles: () => [...files.values()].filter(f => f.extension === 'md'),
     getName: () => 'Test Vault',
     readBinary: async () => (await fetch('/book.epub')).arrayBuffer(),
     getAbstractFileByPath: (path: string) => files.get(path),
     on: (name: string, fn: Function) => { events[name] = fn; },
     createFolder: async (path: string) => { files.set(path, { path }); },
     create: async (path: string, body: string) => { const f = new TFile(path); files.set(path, f); notes.push({ path, body }); return f; }
+  },
+  metadataCache: {
+    getFileCache: (file: any) => ({ links: (notes.find(n => n.path === file.path)?.body.split('\n') ?? []).flatMap((line, index) => [...line.matchAll(/\[\[([^|\]]+)/g)].map(match => ({ link: match[1], position: { start: { line: index } } }))) }),
+    getFirstLinkpathDest: (path: string) => files.get(path)
   },
   workspace: {
     on: () => {},

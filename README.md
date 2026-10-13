@@ -4,7 +4,7 @@ An EPUB reader that connects book passages to your Markdown notes, inspired by P
 
 ## Install
 
-1. Download or build `dist/ebook-plus-0.2.0.zip`.
+1. Download or build `dist/ebook-plus-0.3.0.zip`.
 2. Extract its `ebook-plus` folder into `<vault>/.obsidian/plugins/`.
 3. Reload Obsidian and enable **Ebook Plus** under Community plugins.
 4. Add an EPUB to the vault and click it. If another plugin handles EPUBs, disable that handler first.
@@ -40,6 +40,16 @@ In settings, **Link display template** controls the title, and **Quote template*
 
 Locations describe the current chapter and, in Pages mode, its current layout page. These labels are informational: the link anchors to text, so changing font size or reading mode does not rely on the page label remaining the same.
 
+## Annotation bubbles and highlight backlinks
+
+Hover over a highlight to see its quote and saved comment. Click a highlight to keep the bubble open. The bubble offers **Copy link**, **Copy quote**, **Edit comment**, and **Show in list**, which scrolls the annotation sidebar to the selected card. Escape, clicking elsewhere, or moving through the book closes the bubble. Hover bubbles remain open while the pointer is over their controls.
+
+**Linked mentions** lists the Markdown notes that reference that exact highlight, with a clickable note name and line number. Paste a copied highlight link or callout into a note, then reopen the bubble after Obsidian indexes the note. Clicking a mention opens that note at the corresponding line. Several links on the same line count as one mention. A link to the whole book does not count as a highlight mention. Matching uses the stable book/annotation IDs, or an exact CFI when there is no annotation ID. Legacy external protocol URLs are not indexed here.
+
+The bubble shows your saved annotation comment; linked-note text previews are not implemented. Mentions are read from Obsidian's metadata cache when the bubble opens, so they do not update live while it stays open. Deleting a note link removes its mention on the next lookup but leaves the saved highlight intact.
+
+Pages mode now advances by vertical screenfuls within a chapter, then moves to the next chapter. Scroll mode remains continuous. Text zoom preserves the first visible text anchor and its vertical offset after reflow, within the available scroll range. If you scroll or navigate during zoom, your action takes priority. Page numbers are layout-dependent; near the end of a chapter, the scroll boundary can limit exact alignment. Fixed-layout and vertical-writing books need further compatibility testing.
+
 ## MOBI, AZW/AZW3 and other formats
 
 On desktop, install [Calibre](https://calibre-ebook.com/) and set its `ebook-convert` executable in plugin settings if it is not on PATH. On Windows the usual location is `C:\Program Files\Calibre2\ebook-convert.exe`.
@@ -60,7 +70,7 @@ Book scripts, forms, frames and remote resources are blocked. External links ins
 
 ## Relationship to PDF++
 
-This implements the central reading → highlighting → linked notes workflow, not all PDF++ features. Annotations are stored by Ebook Plus and shown in its reader. Arbitrary incoming backlinks do not automatically create highlights. Native backlink overlays, hover passage previews, rectangular image excerpts, write-back into EPUB, annotation interchange and full PDF++ shortcut/custom-template parity are not implemented.
+This implements the central reading → highlighting → linked notes workflow, not all PDF++ features. Annotations are stored by Ebook Plus and shown in its reader. Arbitrary incoming backlinks do not automatically create highlights. Automatic backlink-created highlights, note-link hover previews, rectangular image excerpts, write-back into EPUB, annotation interchange and full PDF++ shortcut/custom-template parity are not implemented.
 
 PDF++ is a separate project by [Ryota Ushio](https://github.com/RyotaUshio/obsidian-pdf-plus). No PDF++ source code is included. Ebook Plus is an independent project and is not affiliated with or endorsed by PDF++ or Obsidian. See [the implementation plan](PLAN.md) for references and scope.
 

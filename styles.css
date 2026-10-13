@@ -22,10 +22,21 @@
 .ebook-embed { border-inline-start: 3px solid var(--interactive-accent); padding: 12px 18px; background: var(--background-secondary); white-space: pre-wrap; }
 .ebook-muted { color: var(--text-muted); }
 .ebook-help { padding: 5px 14px; color: var(--text-muted); font-size: 12px; }
-.callout[data-callout="epub"] { --callout-icon: book-open; --callout-color: 246, 211, 101; }
-.callout[data-callout="epub"][data-callout-metadata="yellow"] { --callout-color: 246, 211, 101; }
-.callout[data-callout="epub"][data-callout-metadata="green"] { --callout-color: 134, 217, 160; }
-.callout[data-callout="epub"][data-callout-metadata="blue"] { --callout-color: 133, 189, 245; }
-.callout[data-callout="epub"][data-callout-metadata="pink"] { --callout-color: 246, 164, 202; }
-.callout[data-callout="epub"][data-callout-metadata="purple"] { --callout-color: 186, 162, 239; }
+/* Use explicit colors so EPUB callouts also work with themes using the legacy
+   RGB-tuple callout API as well as the current CSS-color API. */
+.callout[data-callout="epub"] { --callout-icon: lucide-book-open; --ebook-rgb: 246, 211, 101; --callout-color: rgb(var(--ebook-rgb)); background-color: rgba(var(--ebook-rgb), .14); border-color: rgba(var(--ebook-rgb), .5); }
+.callout[data-callout="epub"][data-callout-metadata="green" i] { --ebook-rgb: 134, 217, 160; }
+.callout[data-callout="epub"][data-callout-metadata="blue" i] { --ebook-rgb: 133, 189, 245; }
+.callout[data-callout="epub"][data-callout-metadata="pink" i] { --ebook-rgb: 246, 164, 202; }
+.callout[data-callout="epub"][data-callout-metadata="purple" i] { --ebook-rgb: 186, 162, 239; }
+.callout[data-callout="epub"] > .callout-title { color: color-mix(in srgb, rgb(var(--ebook-rgb)) 55%, var(--text-normal, #242424)); }
+.callout[data-callout="epub"] > .callout-title .callout-icon { color: inherit; }
+.ebook-selection > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ebook-pages, .ebook-pages * { overflow-anchor: none; }
+.ebook-card-active { outline: 2px solid var(--interactive-accent, #5488c7); }
+.ebook-annotation-bubble { position: fixed; z-index: 1000; width: 360px; max-width: calc(100vw - 16px); max-height: min(440px, calc(100vh - 16px)); overflow: auto; box-sizing: border-box; padding: 14px; border: 2px solid; border-radius: 8px; background: var(--background-primary, #fff); color: var(--text-normal, #242424); box-shadow: 0 6px 24px #0004; font-size: 13px; }
+.ebook-annotation-bubble blockquote { margin: 12px 0; max-height: 120px; overflow: auto; white-space: pre-wrap; }
+.ebook-bubble-comment { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ebook-bubble-close { float: right; font-size: 11px; }
+.ebook-backlink { display: block; width: 100%; white-space: normal; text-align: start; height: auto; margin-top: 6px; }
 @media (max-width: 650px) { .ebook-body { flex-direction: column; } .ebook-panel { max-width: 100%; width: 100%; max-height: 130px; min-height: 0; border-right: 0; border-bottom: 1px solid var(--background-modifier-border); } .ebook-pages { min-height: 220px; } }
