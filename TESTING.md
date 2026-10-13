@@ -1,12 +1,12 @@
-# Verification for 0.3.1
+# Verification for 0.5.0
 
-Verified on Windows on October 12, 2026.
+Verified on Windows on October 13, 2026.
 
 | Check | Result |
 | --- | --- |
 | TypeScript strict typecheck and bundled plugin build | Passed |
-| Model tests | 22 passed |
-| Browser tests in headless Microsoft Edge | 13 passed for 0.3.0; reader unchanged in 0.3.1 |
+| Model tests | 27 passed |
+| Browser tests in headless Microsoft Edge | 18 passed |
 | Calibre 6.1 MOBI → EPUB round trip | Passed |
 | Calibre 6.1 AZW3 → EPUB round trip | Passed |
 | Unsupported conversion format rejection | Passed |
@@ -23,6 +23,10 @@ The 0.2.0 additions verify page buttons, actual wheel scrolling, mode persistenc
 The 0.3.0 additions test top-passage pixel alignment after repeated zoom in both modes; cancellation of delayed alignment when the user scrolls; chapter-boundary paging in both directions; real iframe hover/click annotation bubbles; sidebar focus without moving the reader; backlink note/line navigation; distinct callout backgrounds with both legacy and current theme color conventions; and scroll stability after idle and selection-toolbar updates. Model tests cover stable-ID backlink matching, exact-CFI fallback, encoded paths, duplicate mentions, wrong-book/annotation rejection, and refreshed cache contents. These checks use an original reflowable book, not a broad publisher corpus.
 
 The 0.3.1 model checks verify nested passage formatting, multi-paragraph/CRLF text, comment separation, empty comments, migration of the prior default template, and preservation of custom templates. Build and package attribution checks were rerun.
+
+The 0.4.0 checks cover Markdown annotation round trips, paragraph/comment separation, conflict rejection, preservation of unrelated prose and edits, invalid/duplicate markers, callout-color edits, deletion, automatic companion creation, existing-file collision handling, companion renames, note switching, and source-line opening. Model tests confirm the merge logic against concurrent same-annotation and unrelated-annotation edits. Reader/browser regression tests use the new storage model. No migration is implemented.
+
+The 0.5.0 tests add local/cross-chapter/non-spine footnotes, missing targets, older reference conventions, hover and keyboard interactions, focus restoration, no navigation on preview, safe formatting without active resources, and ordinary internal-link navigation. Typography checks cover all controls, persistence across chapter changes/reopening, publisher-style reset, and top-passage pixel alignment after font, spacing, margin and width changes. The generated EPUB fixture now includes notes and has deterministic ZIP timestamps.
 
 ## Host validation still needed
 

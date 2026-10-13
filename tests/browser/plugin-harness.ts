@@ -6,7 +6,10 @@ const notes: { path: string; body: string }[] = [];
 const events: Record<string, Function> = {};
 const app: any = {
   vault: {
+    rename: async (file: any, path: string) => { const old = file.path; files.delete(old); file.path = path; files.set(path, file); const note = notes.find(n => n.path === old); if (note) note.path = path; events.rename?.(file, old); },
     getMarkdownFiles: () => [...files.values()].filter(f => f.extension === 'md'),
+    read: async (file: any) => notes.find(n => n.path === file.path)?.body ?? '',
+    process: async (file: any, fn: Function) => { const note = notes.find(n => n.path === file.path)!; note.body = fn(note.body); events.modify?.(file); return note.body; },
     getName: () => 'Test Vault',
     readBinary: async () => (await fetch('/book.epub')).arrayBuffer(),
     getAbstractFileByPath: (path: string) => files.get(path),
@@ -23,6 +26,7 @@ const app: any = {
     getLeavesOfType: (type: string) => type === 'ebook-plus-reader' ? [leaf] : [],
     getLeaf: () => leaf,
     revealLeaf: async () => {},
+    getActiveFile: () => view.file,
     getActiveViewOfType: () => view
   }
 };

@@ -113,3 +113,40 @@ describe('highlight backlinks', () => {
     expect(highlightBacklinks(app, book, a)).toEqual([]);
   });
 });
+
+import { annotationBlock, companionHeader, readAnnotations, mergeAnnotations } from '../src/companion';
+describe('companion Markdown annotation storage', () => {
+  it('round trips passages, paragraphs, comments, identity and color', () => {
+    const value = { ...a, text: 'A [quote]\n\nSecond paragraph.', comment: 'Question?\n\nMore thought.' };
+    const source = companionHeader(book) + annotationBlock(book, value);
+    expect(readAnnotations(source)[0].annotation).toEqual(value);
+  });
+  it('updates one annotation without touching other annotations or personal prose', () => {
+    const second = { ...a, id: 'second', comment: 'Edited in note' };
+    const source = companionHeader(book) + 'My introduction\n\n' + annotationBlock(book, a) + '\n\nPersonal prose.\n\n' + annotationBlock(book, second) + '\nEnd.';
+    const result = mergeAnnotations(source, book, [a, { ...second, comment: 'Old' }], [{ ...a, comment: 'Reader edit' }, { ...second, comment: 'Old' }]);
+    expect(result).toContain('My introduction'); expect(result).toContain('Personal prose.'); expect(result).toContain('End.');
+    expect(readAnnotations(result).map(b => b.annotation.comment)).toEqual(['Reader edit', 'Edited in note']);
+  });
+  it('rejects conflicting edits and malformed blocks instead of overwriting', () => {
+    const source = companionHeader(book) + annotationBlock(book, { ...a, comment: 'New note edit' });
+    expect(() => mergeAnnotations(source, book, [a], [{ ...a, comment: 'Reader edit' }])).toThrow('changed in the note');
+    expect(() => readAnnotations(source.replace('<!-- /ebook-annotation -->', ''))).toThrow('incomplete');
+    expect(() => readAnnotations(source + annotationBlock(book, a))).toThrow('Duplicate');
+  });
+  it('supports deletion, addition and editable callout colors', () => {
+    const source = companionHeader(book) + annotationBlock(book, a);
+    expect(readAnnotations(source.replace('[!EPUB|yellow]', '[!EPUB|pink]'))[0].annotation.color).toBe('pink');
+    expect(readAnnotations(mergeAnnotations(source, book, [a], []))).toEqual([]);
+    expect(readAnnotations(mergeAnnotations(companionHeader(book), book, [], [a]))[0].annotation).toEqual(a);
+  });
+});
+
+describe('typography settings', () => {
+  it('loads defaults for older settings and bounds untrusted values', () => {
+    const settings = hydrate({ settings: { fontFamily: 'url(evil)', lineHeight: 200, pageMargin: -20, textWidth: 5000, paragraphSpacing: Infinity } }).settings;
+    expect(settings.fontFamily).toBe('publisher'); expect(settings.lineHeight).toBe(3);
+    expect(settings.pageMargin).toBe(-1); expect(settings.textWidth).toBe(1400); expect(settings.paragraphSpacing).toBe(-1);
+    expect(hydrate(null).settings.lineHeight).toBe(1.7);
+  });
+});

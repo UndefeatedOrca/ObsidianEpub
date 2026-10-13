@@ -4,12 +4,15 @@ export interface Annotation {
   id: string; cfi: string; text: string; comment: string; color: Color;
   kind: 'highlight' | 'bookmark'; created: string; location?: string;
 }
-export interface BookRecord { id: string; path: string; position?: string; annotations: Annotation[] }
+export interface BookRecord { id: string; path: string; position?: string; notePath?: string; legacyAnnotations?: Annotation[]; annotations: Annotation[] }
 export type ReadingMode = 'paginated' | 'scrolled';
-export interface Settings { fontSize: number; theme: 'light' | 'dark' | 'sepia'; vim: boolean; calibre: string; notesFolder: string; callouts: boolean; readingMode: ReadingMode; quoteTemplate: string; displayTemplate: string }
+export const FONTS = { publisher: '', serif: 'Georgia, serif', sans: 'Arial, sans-serif', mono: 'monospace' } as const;
+export interface Typography { fontFamily: keyof typeof FONTS; lineHeight: number; paragraphSpacing: number; pageMargin: number; textWidth: number }
+export const TYPOGRAPHY: Typography = { fontFamily: 'publisher', lineHeight: 1.7, paragraphSpacing: -1, pageMargin: -1, textWidth: 0 };
+export interface Settings extends Typography { fontSize: number; theme: 'light' | 'dark' | 'sepia'; vim: boolean; calibre: string; notesFolder: string; callouts: boolean; readingMode: ReadingMode; quoteTemplate: string; displayTemplate: string }
 export interface Data { version: 1; settings: Settings; books: Record<string, BookRecord> }
 const LEGACY_QUOTE_TEMPLATE = '> [!EPUB|{{color}}] {{linkWithDisplay}}\n> {{text}}\n{{commentBlock}}';
-export const DEFAULTS: Settings = { fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true, readingMode: 'paginated', quoteTemplate: '> [!EPUB|{{color}}] {{linkWithDisplay}}\n{{quoteBlock}}\n{{commentBlock}}', displayTemplate: '{{file.basename}}, {{location}}' };
+export const DEFAULTS: Settings = { ...TYPOGRAPHY, fontSize: 110, theme: 'sepia', vim: false, calibre: 'ebook-convert', notesFolder: 'Ebook notes', callouts: true, readingMode: 'paginated', quoteTemplate: '> [!EPUB|{{color}}] {{linkWithDisplay}}\n{{quoteBlock}}\n{{commentBlock}}', displayTemplate: '{{file.basename}}, {{location}}' };
 export function emptyData(): Data { return { version: 1, settings: { ...DEFAULTS }, books: {} }; }
 export function isCfi(value: unknown): value is string { return typeof value === 'string' && /^epubcfi\(.+\)$/.test(value) && value.length < 8192; }
 export function hydrate(raw: unknown): Data {
@@ -19,6 +22,10 @@ export function hydrate(raw: unknown): Data {
   if (data.version !== undefined && data.version !== 1) throw new Error('Unsupported Ebook Plus data version. Update the plugin before opening it.');
   const s = data.settings;
   if (s) {
+    if (Object.prototype.hasOwnProperty.call(FONTS, s.fontFamily)) result.settings.fontFamily = s.fontFamily;
+    for (const [key, min, max] of [['lineHeight', 1, 3], ['paragraphSpacing', -1, 3], ['pageMargin', -1, 100], ['textWidth', 0, 1400]] as const) {
+      if (Number.isFinite(s[key])) result.settings[key] = Math.max(min, Math.min(max, s[key]));
+    }
     if (Number.isFinite(s.fontSize)) result.settings.fontSize = Math.max(70, Math.min(200, s.fontSize));
     if (['light', 'dark', 'sepia'].includes(s.theme)) result.settings.theme = s.theme;
     if (typeof s.vim === 'boolean') result.settings.vim = s.vim;

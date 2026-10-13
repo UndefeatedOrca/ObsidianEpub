@@ -25,14 +25,14 @@ test('plugin UI: annotate, comment, restore, export, embed, rename and undo', as
   await page.getByRole('button', { name: 'Bookmark', exact: true }).click();
   await expect(page.locator('.ebook-card')).toHaveCount(2);
   await page.getByRole('button', { name: 'Export', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(1);
-  const note = await page.evaluate(() => (window as any).pluginTest.notes[0]);
+  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(2);
+  const note = await page.evaluate(() => (window as any).pluginTest.notes[1]);
   expect(note.body).toContain('Connect this to my research.');
   expect(note.body).toContain('[[Books/Garden.epub#ebook=');
   expect(note.body).toContain('[!EPUB|yellow]');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(2);
-  expect(await page.evaluate(() => (window as any).pluginTest.notes[1].path)).not.toBe(note.path);
+  await expect.poll(() => page.evaluate(() => (window as any).pluginTest.notes.length)).toBe(3);
+  expect(await page.evaluate(() => (window as any).pluginTest.notes[2].path)).not.toBe(note.path);
   await page.evaluate(() => {
     const t = (window as any).pluginTest; const b = t.view.record;
     t.embed(JSON.stringify({ book: b.id, annotation: b.annotations[0].id }));
@@ -121,7 +121,7 @@ test('copy quote saves a colored highlight; native and legacy links navigate bac
     await opening;
   }, href);
   await expect(page.frameLocator('iframe').first().locator('#lead')).toHaveText('Every idea begins with a small act of attention.');
-  const color = await page.evaluate(() => (window as any).pluginTest.plugin.saved.books[(window as any).pluginTest.view.record.id].annotations[0].color);
+  const color = await page.evaluate(() => (window as any).pluginTest.view.record.annotations[0].color);
   expect(color).toBe('green');
 });
 

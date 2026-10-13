@@ -1,8 +1,10 @@
 import { FileView, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf, normalizePath } from 'obsidian';
 import type { App } from 'obsidian';
-import { Annotation, BookRecord, COLORS, Color, CONVERTIBLE, Data, DEFAULTS, hydrate, isCfi, passageUrl, passageLink, parsePassage, PassageTarget, ReadingMode, quoteMarkdown, safeFolder } from './model';
+import { Annotation, BookRecord, COLORS, Color, TYPOGRAPHY, Typography, CONVERTIBLE, Data, DEFAULTS, hydrate, isCfi, passageUrl, passageLink, parsePassage, PassageTarget, ReadingMode, quoteMarkdown, safeFolder } from './model';
 import { Reader } from './reader';
+import { NoteContent, noteFragment } from './footnotes';
 import { highlightBacklinks } from './backlinks';
+import { companionHeader, companionBookId, companionBookPath, readAnnotations, mergeAnnotations } from './companion';
 
 const VIEW = 'ebook-plus-reader';
 function fail(error: unknown): void { console.error('Ebook Plus:', error); new Notice(error instanceof Error ? error.message : String(error), 8000); }
@@ -26,8 +28,26 @@ class TextDialog extends Modal {
 export default class EbookPlus extends Plugin {
   data!: Data;
   private writes: Promise<void> = Promise.resolve();
+  private noteQueue: Promise<unknown> = Promise.resolve();
+  private baseline = new Map<string, Annotation[]>();
+  private noteTimers = new Map<string, ReturnType<typeof setTimeout>>();
   async onload(): Promise<void> {
     this.data = hydrate(await this.loadData());
+    this.registerEvent(this.app.vault.on('modify', file => {
+      const book = Object.values(this.data.books).find(b => b.notePath === file.path);
+      if (book) {
+        clearTimeout(this.noteTimers.get(book.id));
+        this.noteTimers.set(book.id, setTimeout(() => {
+          this.noteTimers.delete(book.id); void this.reloadAnnotations(book).catch(fail);
+        }, 350));
+      }
+    }));
+    this.registerEvent(this.app.vault.on('delete', file => {
+      for (const book of Object.values(this.data.books)) if (book.notePath === file.path) {
+        book.annotations = []; this.baseline.set(book.id, []); this.refresh(book);
+      }
+    }));
+    this.addCommand({ id: 'open-companion', name: 'Switch between ebook and book note', callback: () => { void this.switchCompanion().catch(fail); } });
     this.registerView(VIEW, leaf => new EbookView(leaf, this));
     this.registerExtensions(['epub'], VIEW);
     this.addSettingTab(new EbookSettings(this.app, this));
@@ -63,6 +83,7 @@ export default class EbookPlus extends Plugin {
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
       let changed = false;
       for (const book of Object.values(this.data.books)) {
+        if (book.notePath === oldPath || book.notePath?.startsWith(oldPath + '/')) { book.notePath = file.path + book.notePath.slice(oldPath.length); changed = true; }
         if (book.path === oldPath || book.path.startsWith(oldPath + '/')) {
           book.path = file.path + book.path.slice(oldPath.length); changed = true;
         }
@@ -70,6 +91,9 @@ export default class EbookPlus extends Plugin {
       if (changed) void this.persist().catch(fail);
     }));
     this.registerEvent(this.app.workspace.on('file-menu', (menu, file) => {
+      if (file instanceof TFile && file.extension === 'epub') menu.addItem(item => item.setTitle('Open companion book note').setIcon('file-text').onClick(() => {
+        const book = this.record(file); void this.loadAnnotations(book).then(() => this.openBookNote(book)).catch(fail);
+      }));
       if (file instanceof TFile && CONVERTIBLE.includes(file.extension.toLowerCase()) && Platform.isDesktopApp) {
         menu.addItem(item => item.setTitle('Convert to EPUB with Calibre').setIcon('book-open').onClick(() => { void this.convert(file).catch(fail); }));
       }
@@ -122,9 +146,87 @@ export default class EbookPlus extends Plugin {
   }
   persist(): Promise<void> {
     const snapshot = JSON.parse(JSON.stringify(this.data));
+    for (const book of Object.values(snapshot.books) as BookRecord[]) if (book.notePath) book.annotations = [];
     const next = this.writes.catch(() => {}).then(() => this.saveData(snapshot));
     this.writes = next;
     return next;
+  }
+  onunload(): void { for (const timer of this.noteTimers.values()) clearTimeout(timer); this.noteTimers.clear(); }
+  private async noteFile(book: BookRecord): Promise<TFile> {
+    if (book.notePath) {
+      const existing = this.app.vault.getAbstractFileByPath(book.notePath);
+      if (existing instanceof TFile) return existing;
+      throw new Error('Book note is missing. Restore it or reopen the book after restoring its note.');
+    }
+    // Recover the association from Markdown, including after a plugin-data reset.
+    const base = book.path.replace(/\.epub$/i, '');
+    const candidate = this.app.vault.getAbstractFileByPath(base + '.md');
+    if (candidate instanceof TFile) {
+      const source = await this.app.vault.read(candidate), id = companionBookId(source);
+      if (id && (id === book.id || (!this.data.books[id] && companionBookPath(source) === book.path))) {
+        delete this.data.books[book.id]; book.id = id; this.data.books[id] = book;
+        book.notePath = candidate.path; return candidate;
+      }
+    }
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const source = await this.app.vault.read(file), id = companionBookId(source);
+      if (id && (id === book.id || (!this.data.books[id] && companionBookPath(source) === book.path))) {
+        delete this.data.books[book.id]; book.id = id; this.data.books[id] = book;
+        book.notePath = file.path; return file;
+      }
+    }
+    let path = base + '.md', n = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) path = `${base} - annotations ${n++}.md`;
+    const file = await this.app.vault.create(path, companionHeader(book));
+    book.notePath = file.path;
+    return file;
+  }
+  async loadAnnotations(book: BookRecord): Promise<void> {
+    const work = this.noteQueue.catch(() => {}).then(async () => {
+      if (!book.notePath && book.annotations.length) book.legacyAnnotations = book.annotations.map(a => ({ ...a }));
+      const file = await this.noteFile(book);
+      const source = await this.app.vault.read(file);
+      if (companionBookId(source) !== book.id) throw new Error('Book note identity does not match this EPUB.');
+      book.annotations = readAnnotations(source).map(b => b.annotation);
+      this.baseline.set(book.id, book.annotations.map(a => ({ ...a })));
+      await this.persist();
+    });
+    this.noteQueue = work; await work;
+  }
+  private async reloadAnnotations(book: BookRecord): Promise<void> { await this.loadAnnotations(book); this.refresh(book); }
+  async saveAnnotations(book: BookRecord): Promise<void> {
+    const desired = book.annotations.map(a => ({ ...a }));
+    const baseline = this.baseline.get(book.id)?.map(a => ({ ...a })) ?? [];
+    const work = this.noteQueue.catch(() => {}).then(async () => {
+      const file = await this.noteFile(book);
+      try {
+        const source = await this.app.vault.process(file, source => mergeAnnotations(source, book, baseline, desired));
+        book.annotations = readAnnotations(source).map(b => b.annotation);
+        this.baseline.set(book.id, book.annotations.map(a => ({ ...a })));
+        await this.persist();
+      } catch (error) {
+        book.annotations = readAnnotations(await this.app.vault.read(file)).map(b => b.annotation);
+        this.baseline.set(book.id, book.annotations.map(a => ({ ...a })));
+        this.refresh(book); throw error;
+      }
+    });
+    this.noteQueue = work; await work;
+  }
+  async openBookNote(book: BookRecord, annotation?: Annotation): Promise<void> {
+    await this.noteQueue.catch(() => {});
+    const file = await this.noteFile(book);
+    const line = annotation ? readAnnotations(await this.app.vault.read(file)).find(b => b.annotation.id === annotation.id)?.line : undefined;
+    await this.app.workspace.getLeaf('tab').openFile(file, { eState: { line: line ?? 0 } });
+  }
+  private async switchCompanion(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) return;
+    if (file.extension === 'epub') { const book = this.record(file); await this.loadAnnotations(book); await this.openBookNote(book); return; }
+    const book = Object.values(this.data.books).find(b => b.notePath === file.path);
+    const path = book?.path ?? companionBookPath(await this.app.vault.read(file));
+    if (!path) throw new Error('This note is not associated with an ebook.');
+    const epub = this.app.vault.getAbstractFileByPath(path) ?? this.app.metadataCache.getFirstLinkpathDest(path, file.path);
+    if (epub instanceof TFile) await this.app.workspace.getLeaf('tab').openFile(epub);
   }
   record(file: TFile): BookRecord {
     let record = Object.values(this.data.books).find(b => b.path === file.path);
@@ -186,11 +288,12 @@ export class EbookView extends FileView {
   private bubble?: HTMLElement;
   private bubbleId?: string;
   private bubblePinned = false;
+  private noteReference?: HTMLElement;
   private bubbleTimer?: ReturnType<typeof setTimeout>;
   constructor(leaf: WorkspaceLeaf, readonly plugin: EbookPlus) {
     super(leaf);
     this.registerDomEvent(this.contentEl, 'keydown', event => this.keydown(event));
-    this.registerDomEvent(this.contentEl.ownerDocument, 'keydown', event => { if (event.key === 'Escape') this.closeBubble(); });
+    this.registerDomEvent(this.contentEl.ownerDocument, 'keydown', event => { if (event.key === 'Escape') this.closeBubble(true); });
     this.registerDomEvent(this.contentEl.ownerDocument, 'pointerdown', event => {
       if (this.bubble && !this.bubble.contains(event.target as Node)) this.closeBubble();
     });
@@ -221,6 +324,7 @@ export class EbookView extends FileView {
     await this.release();
     const generation = ++this.generation;
     this.record = this.plugin.record(file);
+    await this.plugin.loadAnnotations(this.record);
     this.position = this.record.position;
     this.panelMode = 'chapters';
     this.contentEl.empty(); this.contentEl.addClass('ebook-plus');
@@ -234,6 +338,7 @@ export class EbookView extends FileView {
     action(bar, mode === 'paginated' ? '← Previous page' : '↑ Back', () => this.reader?.prev());
     action(bar, mode === 'paginated' ? 'Next page →' : 'Forward ↓', () => this.reader?.next());
     action(bar, 'Chapters', () => { this.panelMode = 'chapters'; this.chapters(); });
+    action(bar, 'Open book note', () => this.plugin.openBookNote(this.record!));
     action(bar, 'Annotations', () => { this.panelMode = 'annotations'; this.annotations(); });
     action(bar, 'Search', () => this.searchPanel());
     action(bar, 'Bookmark', () => this.bookmark());
@@ -242,6 +347,7 @@ export class EbookView extends FileView {
     for (const name of ['light', 'sepia', 'dark']) theme.createEl('option', { value: name, text: name });
     theme.value = this.plugin.data.settings.theme;
     theme.onchange = () => { this.plugin.data.settings.theme = theme.value as typeof this.plugin.data.settings.theme; void this.applyStyle().then(() => this.plugin.persist()).catch(fail); };
+    action(bar, 'Typography', () => this.typographyPanel());
     action(bar, 'A−', () => this.font(-10)); action(bar, 'A+', () => this.font(10));
     const selection = this.contentEl.createDiv('ebook-selection');
     this.selectionLabel = selection.createSpan({ text: 'Select text in the book to highlight or quote it.' });
@@ -278,7 +384,8 @@ export class EbookView extends FileView {
         },
         keydown: event => this.keydown(event),
         annotation: (a, x, y, pinned) => this.showAnnotation(a, x, y, pinned),
-        dismissAnnotation: force => this.dismissBubble(force)
+        dismissAnnotation: force => this.dismissBubble(force),
+        footnote: (note, x, y, pinned, reference) => this.showFootnote(note, x, y, pinned, reference)
       }, this.position, mode, this.plugin.data.settings);
       if (generation !== this.generation) return;
       this.contentEl.dataset.theme = this.plugin.data.settings.theme;
@@ -303,7 +410,37 @@ export class EbookView extends FileView {
     await this.plugin.persist();
     if (this.file) await this.onLoadFile(this.file);
   }
-  private async applyStyle(): Promise<void> { await this.reader?.restyle(this.plugin.data.settings.theme, this.plugin.data.settings.fontSize); this.contentEl.dataset.theme = this.plugin.data.settings.theme; }
+  private async applyStyle(): Promise<void> { await this.reader?.restyle(this.plugin.data.settings.theme, this.plugin.data.settings.fontSize, this.plugin.data.settings); this.contentEl.dataset.theme = this.plugin.data.settings.theme; }
+  private typographyPanel(): void {
+    const modal = new Modal(this.app); modal.titleEl.setText('Reader typography');
+    modal.contentEl.addClass('ebook-typography');
+    modal.contentEl.createEl('p', { text: 'Changes apply immediately and are remembered for other books. Publisher options preserve the book’s styling.' });
+    const s = this.plugin.data.settings;
+    const selects: { key: keyof Typography | 'fontSize'; el: HTMLSelectElement }[] = [];
+    const control = (key: keyof Typography | 'fontSize', title: string, options: [string, string][]) => {
+      const row = modal.contentEl.createEl('label', { cls: 'ebook-type-row' }); row.createSpan({ text: title });
+      const el = row.createEl('select', { attr: { 'aria-label': title } });
+      if (!options.some(([value]) => value === String(s[key]))) options.push([String(s[key]), String(s[key])]);
+      for (const [value, text] of options) el.createEl('option', { value, text });
+      el.value = String(s[key]); selects.push({ key, el });
+      el.onchange = () => {
+        if (key === 'fontFamily') s.fontFamily = el.value as Typography['fontFamily']; else s[key] = Number(el.value);
+        void this.applyStyle().then(() => this.plugin.persist()).catch(fail);
+      };
+    };
+    control('fontFamily', 'Font family', [['publisher','Publisher font'],['serif','Serif — Georgia'],['sans','Sans serif — Arial'],['mono','Monospace']]);
+    control('fontSize', 'Text size', Array.from({ length: 14 }, (_, i) => [String(70 + i * 10), `${70 + i * 10}%`]));
+    control('lineHeight', 'Line spacing', [1,1.2,1.4,1.7,2,2.2,2.5,3].map(n => [String(n), String(n)]));
+    control('paragraphSpacing', 'Paragraph spacing', [['-1','Publisher spacing'], ...[0,0.5,1,1.5,2,3].map(n => [String(n), `${n} em`] as [string,string])]);
+    control('pageMargin', 'Side margins', [['-1','Automatic'], ...[0,16,24,40,64,100].map(n => [String(n), `${n} px`] as [string,string])]);
+    control('textWidth', 'Maximum text width', [['0','Full available width'], ...[480,640,800,960,1200,1400].map(n => [String(n), `${n} px`] as [string,string])]);
+    action(modal.contentEl, 'Reset typography', async () => {
+      Object.assign(s, TYPOGRAPHY, { fontSize: DEFAULTS.fontSize });
+      for (const { key, el } of selects) el.value = String(s[key]);
+      await this.applyStyle(); await this.plugin.persist();
+    });
+    action(modal.contentEl, 'Done', () => modal.close()); modal.open();
+  }
   private async font(delta: number): Promise<void> { const s = this.plugin.data.settings; s.fontSize = Math.max(70, Math.min(200, s.fontSize + delta)); await this.applyStyle(); await this.plugin.persist(); }
   private keydown(e: KeyboardEvent): void {
     const target = e.target as HTMLElement;
@@ -338,7 +475,7 @@ export class EbookView extends FileView {
       const existing = record.annotations.find(a => a.cfi === draft.cfi && a.kind === 'highlight');
       if (existing) { existing.color = draft.color; if (comment) existing.comment = text; }
       else record.annotations.push({ ...draft, comment: text });
-      await this.plugin.persist(); this.plugin.refresh(record);
+      await this.plugin.saveAnnotations(record); this.plugin.refresh(record);
     };
     if (comment) new TextDialog(this.app, 'Passage comment', record.annotations.find(a => a.cfi === draft.cfi)?.comment ?? '', save).open();
     else await save('');
@@ -347,7 +484,7 @@ export class EbookView extends FileView {
     if (!this.position || !this.record) throw new Error('Wait for the book to open.');
     if (this.record.annotations.some(a => a.kind === 'bookmark' && a.cfi === this.position)) { new Notice('This location is already bookmarked.'); return; }
     this.record.annotations.push({ id: crypto.randomUUID(), cfi: this.position, text: this.status.textContent ?? 'Bookmark', comment: '', color: this.color, kind: 'bookmark', created: new Date().toISOString() });
-    await this.plugin.persist(); this.plugin.refresh(this.record); new Notice('Bookmark saved.');
+    await this.plugin.saveAnnotations(this.record); this.plugin.refresh(this.record); new Notice('Bookmark saved.');
   }
   private markdown(a: Annotation): string { return quoteMarkdown(this.app.vault.getName(), this.record!, a, this.plugin.data.settings.callouts, this.plugin.data.settings); }
   private async saveSelection(): Promise<Annotation> {
@@ -356,7 +493,7 @@ export class EbookView extends FileView {
     let annotation = record.annotations.find(a => a.kind === 'highlight' && a.cfi === draft.cfi);
     if (!annotation) { annotation = draft; record.annotations.push(annotation); }
     // An existing annotation keeps its color, comment and identity when copied.
-    await this.plugin.persist(); this.plugin.refresh(record);
+    await this.plugin.saveAnnotations(record); this.plugin.refresh(record);
     return annotation;
   }
   async copyQuote(a?: Annotation): Promise<void> { await navigator.clipboard.writeText(this.markdown(a ?? await this.saveSelection())); new Notice('Quote and saved passage link copied.'); }
@@ -385,7 +522,9 @@ export class EbookView extends FileView {
     }
     if (this.panelMode === 'annotations') this.annotations();
   }
-  private closeBubble(): void { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; this.bubble?.remove(); this.bubble = undefined; this.bubbleId = undefined; this.bubblePinned = false; }
+  private closeBubble(restoreFocus = false): void {
+    const reference = this.noteReference; this.noteReference = undefined; this.reader?.cancelNotePreview();
+    if (restoreFocus && reference?.isConnected) reference.focus({ preventScroll: true }); clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; this.bubble?.remove(); this.bubble = undefined; this.bubbleId = undefined; this.bubblePinned = false; }
   private dismissBubble(force: boolean): void {
     if (force) { this.closeBubble(); return; }
     if (this.bubblePinned || this.bubbleTimer) return;
@@ -415,13 +554,15 @@ export class EbookView extends FileView {
     const controls = bubble.createDiv('ebook-card-actions');
     action(controls, 'Copy link', () => navigator.clipboard.writeText(passageLink(this.record!, a)));
     action(controls, 'Copy quote', () => this.copyQuote(a));
+    action(controls, 'Open annotation note', () => this.plugin.openBookNote(this.record!, a));
     action(controls, 'Show in list', () => this.focusAnnotation(a));
     action(controls, 'Edit comment', () => {
       const record = this.record!; this.closeBubble();
       new TextDialog(this.app, 'Edit annotation comment', a.comment, async comment => {
         const saved = record.annotations.find(item => item.id === a.id);
-        if (saved) saved.comment = comment;
-        await this.plugin.persist(); this.plugin.refresh(record);
+        if (!saved || saved.comment !== a.comment) throw new Error('This annotation changed while the editor was open. Reopen it to edit the latest text.');
+        saved.comment = comment;
+        await this.plugin.saveAnnotations(record); this.plugin.refresh(record);
       }).open();
     });
     const backlinks = highlightBacklinks(this.app, this.record!, a);
@@ -437,6 +578,24 @@ export class EbookView extends FileView {
     bubble.addEventListener('mouseleave', () => { if (!this.bubblePinned) this.closeBubble(); });
     bubble.addEventListener('mouseenter', () => { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; });
   }
+  private showFootnote(note: NoteContent, x: number, y: number, pinned: boolean, reference: Element): void {
+    if (this.noteReference === reference && this.bubble) { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; this.bubblePinned ||= pinned; return; }
+    if (this.bubblePinned && !pinned) return;
+    this.closeBubble(); this.noteReference = reference as HTMLElement; this.bubblePinned = pinned;
+    const doc = this.contentEl.ownerDocument, win = doc.defaultView!;
+    const bubble = this.bubble = doc.body.createDiv('ebook-annotation-bubble ebook-footnote-bubble');
+    bubble.setAttribute('role', 'dialog'); bubble.setAttribute('aria-label', 'Book footnote');
+    bubble.createEl('strong', { text: note.title });
+    const close = action(bubble, 'Close footnote', () => this.closeBubble(true)); close.addClass('ebook-bubble-close');
+    const content = bubble.createDiv('ebook-footnote-content');
+    if (note.element) content.appendChild(noteFragment(note.element, doc));
+    else content.createEl('p', { text: note.error || 'This note is unavailable.' });
+    bubble.style.left = `${Math.max(8, Math.min(x, win.innerWidth - bubble.offsetWidth - 8))}px`;
+    bubble.style.top = `${Math.max(8, Math.min(y + 8, win.innerHeight - bubble.offsetHeight - 8))}px`;
+    bubble.addEventListener('mouseenter', () => { clearTimeout(this.bubbleTimer); this.bubbleTimer = undefined; });
+    bubble.addEventListener('mouseleave', () => this.dismissBubble(false));
+    if (pinned) close.focus({ preventScroll: true });
+  }
   private chapters(): void {
     this.panel.empty(); this.panel.createEl('h3', { text: 'Contents' });
     const walk = (items: { label: string; href: string; subitems?: unknown[] }[], depth = 0) => {
@@ -450,7 +609,7 @@ export class EbookView extends FileView {
   }
   private annotations(): void {
     this.panel.empty(); this.panel.createEl('h3', { text: 'Annotations' });
-    this.panel.createEl('p', { cls: 'ebook-muted', text: 'Saved in Ebook Plus data.json, independently of your notes. Copying a quote also saves its highlight.' });
+    this.panel.createEl('p', { cls: 'ebook-muted', text: 'Saved in the companion Markdown note. Edit its callouts to update highlights and comments.' });
     if (!this.record?.annotations.length) this.panel.createEl('p', { text: 'Select a passage and choose Highlight or Comment. Bookmarks appear here too.' });
     for (const a of this.record?.annotations ?? []) {
       const card = this.panel.createDiv('ebook-card'); card.dataset.annotation = a.id; card.style.borderInlineStartColor = COLORS[a.color];
@@ -461,16 +620,21 @@ export class EbookView extends FileView {
       action(controls, 'Copy callout', async () => { await navigator.clipboard.writeText(quoteMarkdown(this.app.vault.getName(), this.record!, a, true, this.plugin.data.settings)); new Notice('Colored callout copied.'); });
       action(controls, 'Edit', () => {
         const record = this.record!;
-        new TextDialog(this.app, 'Edit annotation comment', a.comment, async comment => { a.comment = comment; await this.plugin.persist(); this.plugin.refresh(record); }).open();
+        const original = a.comment;
+        new TextDialog(this.app, 'Edit annotation comment', original, async comment => {
+          const saved = record.annotations.find(item => item.id === a.id);
+          if (!saved || saved.comment !== original) throw new Error('This annotation changed while the editor was open. Reopen it to edit the latest text.');
+          saved.comment = comment; await this.plugin.saveAnnotations(record); this.plugin.refresh(record);
+        }).open();
       });
       action(controls, 'Delete', async () => {
         const record = this.record!;
         record.annotations = record.annotations.filter(item => item.id !== a.id);
-        await this.plugin.persist(); this.plugin.refresh(record);
+        await this.plugin.saveAnnotations(record); this.plugin.refresh(record);
         const notice = new Notice('', 10000);
         const content = document.createDocumentFragment(); content.append('Annotation deleted. ');
         const undo = document.createElement('button'); undo.textContent = 'Undo';
-        undo.onclick = () => { record.annotations.push(a); void this.plugin.persist().then(() => this.plugin.refresh(record)).catch(fail); notice.hide(); };
+        undo.onclick = () => { record.annotations.push(a); void this.plugin.saveAnnotations(record).then(() => this.plugin.refresh(record)).catch(fail); notice.hide(); };
         content.append(undo); notice.setMessage(content);
       });
     }

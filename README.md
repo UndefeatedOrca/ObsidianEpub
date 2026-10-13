@@ -4,14 +4,14 @@ An EPUB reader that connects book passages to your Markdown notes, inspired by P
 
 ## Install
 
-1. Download or build `dist/ebook-plus-0.3.1.zip`.
+1. Download or build `dist/ebook-plus-0.5.0.zip`.
 2. Extract its `ebook-plus` folder into `<vault>/.obsidian/plugins/`.
 3. Reload Obsidian and enable **Ebook Plus** under Community plugins.
 4. Add an EPUB to the vault and click it. If another plugin handles EPUBs, disable that handler first.
 
 This is an initial development release, not yet published in the community plugin directory.
 
-For BRAT, create a `0.2.0` GitHub prerelease and attach `main.js`, `manifest.json`, and `styles.css` individually from `dist/ebook-plus/`, alongside `LICENSE` and `THIRD_PARTY_NOTICES.md`. The ZIP is optional for manual installation. BRAT does not install from the ZIP. To upgrade manually, replace those three plugin files and retain `data.json`; existing highlights and positions are preserved.
+For BRAT, create a `0.5.0` GitHub prerelease and attach `main.js`, `manifest.json`, and `styles.css` individually from `dist/ebook-plus/`, alongside `LICENSE` and `THIRD_PARTY_NOTICES.md`. The ZIP is optional for manual installation. BRAT does not install from the ZIP. To upgrade manually, replace those three plugin files and retain `data.json`; reading positions are preserved. Version 0.4.0 starts Markdown-backed annotation storage; old JSON annotations are not migrated.
 
 ## Reading and annotation
 
@@ -53,13 +53,25 @@ The default callout nests the book passage in a blockquote, with your comment un
 
 The previous default template upgrades automatically. Custom templates remain unchanged; use `{{quoteBlock}}` on its own line to get the nested passage, or restore the default templates in settings. Previously pasted notes are not rewritten.
 
+## Footnotes and typography
+
+Hover over a footnote/endnote reference to preview its text, or click/tap it to keep the popover open. Keyboard users can focus the reference and press Enter. Close the popover or press Escape to return focus to the reference without navigating away. Scrolling or navigating dismisses the popover.
+
+Supported references include EPUB `epub:type="noteref"`, `role="doc-noteref"`, common note-reference classes, same-document semantic note targets, and older fragment names such as `#fn1` or `#note_2`. Notes can be in the current chapter, another chapter, or an XHTML/HTML resource in the EPUB manifest outside the reading spine. Missing targets show an explanatory message. Unmarked publisher-specific note conventions may still require normal link navigation.
+
+Popovers preserve paragraphs, emphasis, lists and basic tables. They omit publisher styling, executable content, resource URLs and active links; image alt text is shown instead of loading images. Note semantics follow the [EPUB structural vocabulary](https://www.w3.org/TR/epub-ssv-11/).
+
+The **Typography** toolbar button opens controls for publisher/serif/sans-serif/monospace fonts, text size, line spacing, paragraph spacing, side margins and maximum text width. Changes apply immediately in the current reader and are saved as defaults for newly opened books. **Reset typography** restores the defaults, including publisher font/paragraph spacing and automatic margins. Available fonts use local system fallbacks; nothing is downloaded.
+
+Reflow retains the top visible text anchor where the available scroll range allows it. Reading actions take priority over pending position corrections. These controls target reflowable EPUBs; fixed-layout and vertical-writing books still require broader compatibility testing.
+
 ## Annotation bubbles and highlight backlinks
 
 Hover over a highlight to see its quote and saved comment. Click a highlight to keep the bubble open. The bubble offers **Copy link**, **Copy quote**, **Edit comment**, and **Show in list**, which scrolls the annotation sidebar to the selected card. Escape, clicking elsewhere, or moving through the book closes the bubble. Hover bubbles remain open while the pointer is over their controls.
 
 **Linked mentions** lists the Markdown notes that reference that exact highlight, with a clickable note name and line number. Paste a copied highlight link or callout into a note, then reopen the bubble after Obsidian indexes the note. Clicking a mention opens that note at the corresponding line. Several links on the same line count as one mention. A link to the whole book does not count as a highlight mention. Matching uses the stable book/annotation IDs, or an exact CFI when there is no annotation ID. Legacy external protocol URLs are not indexed here.
 
-The bubble shows your saved annotation comment; linked-note text previews are not implemented. Mentions are read from Obsidian's metadata cache when the bubble opens, so they do not update live while it stays open. Deleting a note link removes its mention on the next lookup but leaves the saved highlight intact.
+The bubble shows your saved annotation comment; linked-note text previews are not implemented. Mentions are read from Obsidian's metadata cache when the bubble opens, so they do not update live while it stays open. Deleting a copied link in another note removes its mention but leaves the annotation in its companion note intact.
 
 Pages mode now advances by vertical screenfuls within a chapter, then moves to the next chapter. Scroll mode remains continuous. Text zoom preserves the first visible text anchor and its vertical offset after reflow, within the available scroll range. If you scroll or navigate during zoom, your action takes priority. Page numbers are layout-dependent; near the end of a chapter, the scroll boundary can limit exact alignment. Fixed-layout and vertical-writing books need further compatibility testing.
 
@@ -73,17 +85,25 @@ Native EPUB reading is designed for desktop and mobile. Conversion requires desk
 
 ## Storage and links
 
-Annotations, comments, book IDs, reading positions and preferences are stored in `.obsidian/plugins/ebook-plus/data.json`. Back up/sync this file alongside your books. Changes in multiple open panes are shared; simultaneous edits on different devices require your sync tool's conflict resolution.
+Opening an EPUB creates a companion Markdown note beside it: `Book.epub` → `Book.md`. If that name belongs to an unrelated note, Ebook Plus creates `Book - annotations 2.md` (or the next available number). Existing files are never overwritten. The note's `ebook` property links to the EPUB and `ebook-id` stores its stable identity. An associated note keeps its own name when the book is renamed.
+
+Highlights, bookmarks and comments are stored as ordinary colored callouts in that note. Each callout has HTML comment markers carrying its stable ID and text anchor. Keep those markers intact. Edit the nested quote, outer comment, or callout color in Markdown to update the reader after saving; delete the entire marked block to remove its annotation. Put unrelated prose outside the markers. Reader edits replace only the affected block, preserve other text, and reject conflicting edits instead of overwriting them. An incomplete or invalid block needs repairing before the reader can save to that note.
+
+Use **Open book note** in the toolbar, **Open annotation note** in a highlight bubble, or **Open companion book note** in an EPUB's context menu. The command **Switch between ebook and book note** works in either direction and can be assigned an Obsidian hotkey. The `ebook` property also provides a normal clickable return link. No file-explorer modifier-click override is installed.
+
+Plugin `data.json` retains book associations, reading positions and settings; active annotation bodies are read from Markdown rather than duplicated there. Back up/sync the companion notes and EPUBs, plus plugin data for reading preferences. If a companion note is deleted, the plugin does not silently recreate it or resurrect deleted highlights; restore the note to continue. Separate-device synchronization still relies on your sync tool's conflict handling.
+
+No migration is included. When an old book record is first opened, its previous JSON annotations are retained under `legacyAnnotations` in plugin data, but are not imported or displayed. New annotations go to the companion Markdown note.
 
 New quote links use `[[file.epub#ebook=…&annotation=…&cfi=…&color=…|label]]`. Filenames containing characters reserved by wikilinks use a Markdown link instead. Legacy `obsidian://ebook-plus?vault=…&book=…&file=…&cfi=…` links remain supported, including local clicks on old “Open passage” links. Passage navigation waits for the reader to finish loading. The persistent book ID survives file and folder renames while the plugin is enabled. The file path is a fallback when opening a link without its original plugin data. Exported vault links follow Obsidian's own link-update settings. Moving books while the plugin is disabled, replacing an EPUB with a different edition, or deleting plugin data can invalidate anchors. EPUB CFIs identify text locations, not stable printed page numbers.
 
-You do not need to paste into a note to keep a highlight. Highlight, Comment and Copy quote save it in plugin data immediately. Deleting a pasted quote does not delete its highlight, and deleting a highlight does not delete the pasted Markdown. Back up `data.json`; annotations are not written inside the EPUB archive.
+Highlight, Comment and Copy quote automatically save into the companion note; manual pasting is unnecessary. Copies exported elsewhere remain snapshots. Deleting an annotation from the reader removes its marked companion block, but leaves copies in other notes unchanged. Annotations are not written into the EPUB archive.
 
 Book scripts, forms, frames and remote resources are blocked. External links inside the ebook are disabled in this first version. The EPUB archive is never changed. Large or malformed books may not render; search currently retains loaded chapters in memory. EPUB 2/3 reflowable books are the primary target; complex fixed-layout, RTL and multimedia books need broader compatibility testing.
 
 ## Relationship to PDF++
 
-This implements the central reading → highlighting → linked notes workflow, not all PDF++ features. Annotations are stored by Ebook Plus and shown in its reader. Arbitrary incoming backlinks do not automatically create highlights. Automatic backlink-created highlights, note-link hover previews, rectangular image excerpts, write-back into EPUB, annotation interchange and full PDF++ shortcut/custom-template parity are not implemented.
+This implements the central reading → highlighting → linked notes workflow, not all PDF++ features. Annotations are stored in companion Markdown notes and shown in the reader. Arbitrary incoming backlinks do not automatically create highlights. Automatic backlink-created highlights, note-link hover previews, rectangular image excerpts, write-back into EPUB, annotation interchange and full PDF++ shortcut/custom-template parity are not implemented.
 
 PDF++ is a separate project by [Ryota Ushio](https://github.com/RyotaUshio/obsidian-pdf-plus). No PDF++ source code is included. Ebook Plus is an independent project and is not affiliated with or endorsed by PDF++ or Obsidian. See [the implementation plan](PLAN.md) for references and scope.
 
